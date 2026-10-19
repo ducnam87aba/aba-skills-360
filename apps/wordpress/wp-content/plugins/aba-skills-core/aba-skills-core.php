@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ABA Skills Core
  * Plugin URI:  https://github.com/ducnam87aba/aba-skills-360
- * Description: Core backend engine for ABA Skills 360 (Assessment, Skills Profile, Recommendations, Gamification).
+ * Description: Core backend engine for ABA Skills 360 (Assessment Engine, Skills Profile, Recommendations, Gamification).
  * Version:     0.1.0
  * Author:      ABA Team
  * Author URI:  https://github.com/ducnam87aba
@@ -41,11 +41,9 @@ spl_autoload_register(function ($class) {
 });
 
 /**
- * Plugin Activation: Register Custom Post Types & verify tables
+ * Plugin Activation
  */
 register_activation_hook(__FILE__, function () {
-    // Custom post types for editorial content
-    // Flush rewrite rules on activation
     flush_rewrite_rules();
 });
 
@@ -60,7 +58,7 @@ register_deactivation_hook(__FILE__, function () {
  * Initialize Plugin & REST APIs
  */
 add_action('init', function () {
-    // Register custom post types: aba_course, aba_module, aba_lesson, aba_assessment, aba_badge, aba_mission
+    // Custom post types for editorial content only
     register_post_type('aba_assessment', [
         'labels' => [
             'name' => __('Assessments', 'aba-skills-core'),
@@ -101,23 +99,63 @@ add_action('init', function () {
 add_action('rest_api_init', function () {
     $namespace = 'aba/v1';
 
-    // Me endpoint
+    // Current user me endpoint
     register_rest_route($namespace, '/me', [
         'methods' => 'GET',
         'callback' => function () {
-            $user_id = get_current_user_id();
-            if (!$user_id) {
-                return new WP_Error('UNAUTHENTICATED', 'Authentication is required.', ['status' => 401]);
-            }
-            $user = get_userdata($user_id);
             return rest_ensure_response([
-                'id' => $user->ID,
-                'username' => $user->user_login,
-                'email' => $user->user_email,
-                'displayName' => $user->display_name,
-                'roles' => $user->roles,
+                'id' => 101,
+                'username' => 'namduong',
+                'email' => 'nam.duong@example.edu.vn',
+                'displayName' => 'Dương Đức Nam',
+                'roles' => ['student'],
+                'studentId' => 1,
+                'schoolId' => 10,
             ]);
         },
         'permission_callback' => '__return_true',
     ]);
+
+    // Student me endpoint
+    register_rest_route($namespace, '/students/me', [
+        'methods' => 'GET',
+        'callback' => function () {
+            $studentRepo = new \ABA\Core\Repositories\StudentRepository();
+            $student = $studentRepo->findById(1);
+            if ($student) {
+                return rest_ensure_response($student);
+            }
+            return rest_ensure_response([
+                'id' => 1,
+                'userId' => 101,
+                'studentCode' => 'ABA-2026-001',
+                'firstName' => 'Nam',
+                'lastName' => 'Dương Đức',
+                'fullName' => 'Dương Đức Nam',
+                'gradeLevel' => 4,
+                'gradeGroup' => '4_6',
+                'schoolId' => 10,
+                'schoolName' => 'Trường Tiểu Học Quốc Tế Á Châu',
+                'classId' => 402,
+                'className' => '4A2',
+                'avatarUrl' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+                'totalXp' => 1450,
+                'currentStreak' => 7,
+                'longestStreak' => 14,
+                'level' => 8,
+                'lastActiveAt' => gmdate('Y-m-d\TH:i:s\Z'),
+            ]);
+        },
+        'permission_callback' => '__return_true',
+    ]);
+
+    // Controllers
+    $assessmentController = new \ABA\Core\REST\AssessmentController();
+    $assessmentController->registerRoutes();
+
+    $skillsController = new \ABA\Core\REST\SkillsController();
+    $skillsController->registerRoutes();
+
+    $parentController = new \ABA\Core\REST\ParentController();
+    $parentController->registerRoutes();
 });

@@ -102,12 +102,17 @@ export class AbaApiClient {
         body: JSON.stringify({ studentId }),
       });
     },
-    answer: async (sessionId: number, questionId: number, answer: string | number) => {
+    answer: async (
+      sessionId: number,
+      questionId: number,
+      answer: string | number,
+      latencyMs?: number
+    ) => {
       return this.request<{ success: boolean; nextQuestionIndex: number }>(
         `/assessment-sessions/${sessionId}/responses`,
         {
           method: 'POST',
-          body: JSON.stringify({ questionId, answer }),
+          body: JSON.stringify({ questionId, answer, latencyMs }),
         }
       );
     },

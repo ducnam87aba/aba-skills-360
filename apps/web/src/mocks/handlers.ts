@@ -5,14 +5,13 @@ import type {
   SkillScore,
   SkillHistoryEntry,
   LearningPath,
-  Assessment,
   AssessmentSession,
   Mission,
   Badge,
   StudentReport,
+  SkillSnapshot,
 } from '@aba/types';
 
-// Mock Data
 export const mockStudentUser: User = {
   id: 101,
   username: 'namduong',
@@ -45,7 +44,8 @@ export const mockStudentProfile: StudentProfile = {
   schoolName: 'Trường Tiểu Học Quốc Tế Á Châu',
   classId: 402,
   className: '4A2',
-  avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+  avatarUrl:
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
   totalXp: 1450,
   currentStreak: 7,
   longestStreak: 14,
@@ -53,52 +53,65 @@ export const mockStudentProfile: StudentProfile = {
   lastActiveAt: new Date().toISOString(),
 };
 
+/**
+ * 6 Core Competencies defined in docs/assessment-spec.md Section 4
+ */
 export const mockSkillScores: SkillScore[] = [
   {
     skillId: 1,
-    skillCode: 'COG_LOGIC',
-    skillName: 'Tư duy logic & Giải quyết vấn đề',
-    category: 'cognitive',
+    skillCode: 'SA',
+    skillName: 'Tự nhận thức',
+    category: 'core_competency',
     score: 82,
-    maxScore: 100,
-    level: 'advanced',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    skillId: 2,
-    skillCode: 'COMM_VERBAL',
-    skillName: 'Giao tiếp & Diễn đạt ngôn ngữ',
-    category: 'communication',
-    score: 75,
     maxScore: 100,
     level: 'proficient',
     updatedAt: new Date().toISOString(),
   },
   {
-    skillId: 3,
-    skillCode: 'SOC_EMOTION',
-    skillName: 'Quản lý cảm xúc & Thấu cảm xã hội',
-    category: 'social_emotional',
+    skillId: 2,
+    skillCode: 'ER',
+    skillName: 'Quản lý cảm xúc',
+    category: 'core_competency',
     score: 68,
     maxScore: 100,
     level: 'developing',
     updatedAt: new Date().toISOString(),
   },
   {
+    skillId: 3,
+    skillCode: 'SM',
+    skillName: 'Tự quản lý',
+    category: 'core_competency',
+    score: 85,
+    maxScore: 100,
+    level: 'advanced',
+    updatedAt: new Date().toISOString(),
+  },
+  {
     skillId: 4,
-    skillCode: 'ADAPT_AUTONOMY',
-    skillName: 'Khả năng thích ứng & Tự lập',
-    category: 'adaptive',
+    skillCode: 'CO',
+    skillName: 'Giao tiếp',
+    category: 'core_competency',
+    score: 74,
+    maxScore: 100,
+    level: 'proficient',
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    skillId: 5,
+    skillCode: 'CE',
+    skillName: 'Hợp tác và đồng cảm',
+    category: 'core_competency',
     score: 88,
     maxScore: 100,
     level: 'advanced',
     updatedAt: new Date().toISOString(),
   },
   {
-    skillId: 5,
-    skillCode: 'MOTOR_FINE',
-    skillName: 'Vận động tinh & Phối hợp tay mắt',
-    category: 'motor',
+    skillId: 6,
+    skillCode: 'PD',
+    skillName: 'Giải quyết vấn đề và ra quyết định',
+    category: 'core_competency',
     score: 90,
     maxScore: 100,
     level: 'advanced',
@@ -114,14 +127,15 @@ export const mockLearningPath: LearningPath = {
     {
       id: 'unit-1',
       title: 'Chương 1: Nền tảng Giao tiếp Chủ động',
-      description: 'Làm quen với việc lắng nghe chủ động và phản hồi tích cực',
+      description: 'Làm quen với việc lắng nghe tích cực và phản hồi hòa nhã',
+      competencyTarget: 'CO',
       order: 1,
       status: 'active',
       nodes: [
         {
           id: 'node-1',
-          title: 'Nhận biết tín hiệu cảm xúc',
-          description: 'Học cách nhận biết ngôn ngữ cơ thể của bạn bè',
+          title: 'Nhận biết tín hiệu cảm xúc bạn bè',
+          description: 'Học cách quan sát nét mặt và cử chỉ',
           type: 'lesson',
           status: 'completed',
           score: 100,
@@ -130,8 +144,8 @@ export const mockLearningPath: LearningPath = {
         },
         {
           id: 'node-2',
-          title: 'Thực hành Lắng nghe tích cực',
-          description: 'Bài tập nhập vai tình huống khi làm việc nhóm',
+          title: 'Thực hành Lắng nghe không phán xét',
+          description: 'Bài tập nhập vai tình huống làm việc nhóm',
           type: 'lesson',
           status: 'unlocked',
           xpReward: 40,
@@ -139,8 +153,8 @@ export const mockLearningPath: LearningPath = {
         },
         {
           id: 'node-3',
-          title: 'Thử thách: Đóng vai Người lắng nghe',
-          description: 'Đánh giá kỹ năng phản hồi với đối tác',
+          title: 'Thử thách: Hóa giải hiểu lầm nhỏ',
+          description: 'Trắc nghiệm lựa chọn cách diễn đạt phù hợp',
           type: 'quiz',
           status: 'locked',
           xpReward: 60,
@@ -149,7 +163,7 @@ export const mockLearningPath: LearningPath = {
         {
           id: 'node-4',
           title: 'Boss Challenge: Buổi thuyết trình tự tin',
-          description: 'Vượt qua thử thách chương để mở khóa chương mới',
+          description: 'Vượt qua thử thách chương để mở khóa',
           type: 'boss_challenge',
           status: 'locked',
           xpReward: 100,
@@ -159,15 +173,16 @@ export const mockLearningPath: LearningPath = {
     },
     {
       id: 'unit-2',
-      title: 'Chương 2: Tư duy Phân tích & Giải quyết xung đột',
-      description: 'Phương pháp phân tích nguyên nhân và tìm giải pháp đôi bên cùng có lợi',
+      title: 'Chương 2: Quản lý Cảm xúc & Làm dịu căng thẳng',
+      description: 'Phương pháp nhận biết tác nhân gây cáu giận và tự điều chỉnh',
+      competencyTarget: 'ER',
       order: 2,
       status: 'locked',
       nodes: [
         {
           id: 'node-2-1',
-          title: 'Xác định điểm nút xung đột',
-          description: 'Các bài học mô phỏng tình huống thực tế',
+          title: 'Kỹ thuật thở sâu 3 phút',
+          description: 'Bài tập điều hòa nhịp thở tức thời',
           type: 'lesson',
           status: 'locked',
           xpReward: 50,
@@ -252,25 +267,30 @@ export const mockReports: StudentReport[] = [
     studentId: 1,
     generatedAt: '2026-10-19T08:00:00Z',
     title: 'Báo cáo Định kỳ Năng lực Kỹ năng Tháng 10/2026',
-    summary: 'Học sinh Dương Đức Nam thể hiện sự tiến bộ vượt trội trong kỹ năng Vận động tinh và Tư duy logic. Kỹ năng quản lý cảm xúc có cải thiện rõ nét khi thảo luận nhóm.',
+    summary:
+      'Học sinh Dương Đức Nam thể hiện sự tiến bộ vượt trội trong năng lực Hợp tác và Giải quyết vấn đề. Năng lực Quản lý cảm xúc có thể đẩy mạnh thêm thông qua các tình huống thực hành gia đình.',
     overallScore: 81,
     strengths: [
-      'Khả năng tập trung và giải quyết vấn đề mạch lạc',
-      'Chủ động tương tác và tuân thủ nguyên tắc khi học tập',
+      'Khả năng tập trung và nhận diện vấn đề logic mạch lạc',
+      'Chủ động phối hợp nhóm và hỗ trợ bạn bè cùng tiến bộ',
     ],
     areasForGrowth: [
       'Cần thêm bài tập thực hành kiềm chế cảm xúc khi gặp áp lực thời gian',
     ],
     recommendations: [
       {
+        id: 'rec-1',
         title: 'Thực hành thở sâu 3 phút',
         description: 'Bài tập điều hòa nhịp thở trước khi bắt đầu bài thi',
         type: 'home_exercise',
+        targetCompetency: 'ER',
       },
       {
-        title: 'Chương 2: Tư duy Phân tích tình huống',
-        description: 'Khóa học bổ trợ kỹ năng đối mặt với thử thách',
+        id: 'rec-2',
+        title: 'Chương 1: Nền tảng Giao tiếp Chủ động',
+        description: 'Khóa học bổ trợ kỹ năng lắng nghe và giải thích bất đồng',
         type: 'lesson',
+        targetCompetency: 'CO',
       },
     ],
   },
@@ -282,7 +302,9 @@ export const handlers = [
   http.get('*/wp-json/aba/v1/me', ({ request }) => {
     const url = new URL(request.url);
     const roleParam = url.searchParams.get('as') || 'student';
-    return HttpResponse.json(roleParam === 'parent' ? mockParentUser : mockStudentUser);
+    return HttpResponse.json(
+      roleParam === 'parent' ? mockParentUser : mockStudentUser
+    );
   }),
 
   // Student me profile
@@ -317,17 +339,17 @@ export const handlers = [
       {
         snapshotId: 1,
         date: '2026-08-01',
-        scores: { COG_LOGIC: 65, COMM_VERBAL: 60, SOC_EMOTION: 55, ADAPT_AUTONOMY: 70, MOTOR_FINE: 75 },
+        scores: { SA: 70, ER: 55, SM: 72, CO: 60, CE: 78, PD: 80 },
       },
       {
         snapshotId: 2,
         date: '2026-09-01',
-        scores: { COG_LOGIC: 74, COMM_VERBAL: 68, SOC_EMOTION: 62, ADAPT_AUTONOMY: 80, MOTOR_FINE: 82 },
+        scores: { SA: 76, ER: 62, SM: 80, CO: 68, CE: 82, PD: 85 },
       },
       {
         snapshotId: 3,
         date: '2026-10-01',
-        scores: { COG_LOGIC: 82, COMM_VERBAL: 75, SOC_EMOTION: 68, ADAPT_AUTONOMY: 88, MOTOR_FINE: 90 },
+        scores: { SA: 82, ER: 68, SM: 85, CO: 74, CE: 88, PD: 90 },
       },
     ];
     return HttpResponse.json(history);
@@ -342,7 +364,7 @@ export const handlers = [
       version: '1.0.0',
       status: 'in_progress',
       currentQuestionIndex: 0,
-      totalQuestions: 5,
+      totalQuestions: 6,
       startedAt: new Date().toISOString(),
       responses: [],
     };
@@ -358,30 +380,43 @@ export const handlers = [
   }),
 
   // Assessment complete
-  http.post('*/wp-json/aba/v1/assessment-sessions/:id/complete', async ({ params }) => {
-    const completedSession: AssessmentSession = {
-      id: Number(params.id),
-      assessmentId: 1,
-      studentId: 1,
-      version: '1.0.0',
-      status: 'completed',
-      currentQuestionIndex: 5,
-      totalQuestions: 5,
-      startedAt: new Date(Date.now() - 600000).toISOString(),
-      completedAt: new Date().toISOString(),
-      responses: [],
-    };
-    return HttpResponse.json({
-      session: completedSession,
-      snapshot: {
+  http.post(
+    '*/wp-json/aba/v1/assessment-sessions/:id/complete',
+    async ({ params }) => {
+      const completedSession: AssessmentSession = {
+        id: Number(params.id),
+        assessmentId: 1,
+        studentId: 1,
+        version: '1.0.0',
+        status: 'completed',
+        currentQuestionIndex: 6,
+        totalQuestions: 6,
+        startedAt: new Date(Date.now() - 600000).toISOString(),
+        completedAt: new Date().toISOString(),
+        responses: [],
+      };
+
+      const snapshot: SkillSnapshot = {
         id: 55,
         studentId: 1,
         assessmentSessionId: Number(params.id),
         snapshotDate: new Date().toISOString(),
+        overallScore: 81.17,
         scores: mockSkillScores,
-      },
-    });
-  }),
+        qualityFlags: {
+          completionRate: 100,
+          speedingFlag: false,
+          straightlining: false,
+          averageLatencyMs: 4200,
+        },
+      };
+
+      return HttpResponse.json({
+        session: completedSession,
+        snapshot,
+      });
+    }
+  ),
 
   // Parent Children
   http.get('*/wp-json/aba/v1/parent/children', () => {

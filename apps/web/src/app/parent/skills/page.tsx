@@ -4,7 +4,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@aba/api-client';
 import { Card, Badge } from '@aba/ui';
-import { TrendingUp, BarChart } from 'lucide-react';
+import { TrendingUp, BarChart3, ShieldCheck } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -28,17 +28,22 @@ export default function ParentSkillsPage() {
   });
 
   if (isLoading) {
-    return <div className="p-8 text-center text-slate-400">Đang tải xu hướng năng lực...</div>;
+    return (
+      <div className="p-8 text-center text-slate-400">
+        Đang tải xu hướng năng lực...
+      </div>
+    );
   }
 
-  // Transform longitudinal data for Recharts
+  // Transform longitudinal data for Recharts matching 6 competencies (docs/assessment-spec.md)
   const chartData = history?.map((item) => ({
     date: item.date,
-    'Tư duy logic': item.scores['COG_LOGIC'],
-    'Giao tiếp': item.scores['COMM_VERBAL'],
-    'Cảm xúc xã hội': item.scores['SOC_EMOTION'],
-    'Thích ứng': item.scores['ADAPT_AUTONOMY'],
-    'Vận động tinh': item.scores['MOTOR_FINE'],
+    'Tự nhận thức (SA)': item.scores.SA,
+    'Quản lý cảm xúc (ER)': item.scores.ER,
+    'Tự quản lý (SM)': item.scores.SM,
+    'Giao tiếp (CO)': item.scores.CO,
+    'Hợp tác & Đồng cảm (CE)': item.scores.CE,
+    'Giải quyết vấn đề (PD)': item.scores.PD,
   }));
 
   return (
@@ -48,7 +53,7 @@ export default function ParentSkillsPage() {
           Biểu Đồ Xu Hướng Năng Lực (Longitudinal History)
         </h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Lịch sử tiến bộ qua các kỳ đánh giá chuẩn hóa theo thời gian thực.
+          Lịch sử tiến bộ qua các kỳ đánh giá chuẩn hóa 6 nhóm năng lực cốt lõi theo thời gian.
         </p>
       </div>
 
@@ -56,12 +61,12 @@ export default function ParentSkillsPage() {
       <Card className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-emerald-500" /> Tiến trình phát triển theo tháng
+            <TrendingUp className="w-4 h-4 text-emerald-500" /> Tiến trình 6 năng lực cốt lõi theo tháng
           </h2>
-          <Badge variant="blue">Snapshot 360°</Badge>
+          <Badge variant="purple">Chuẩn hóa 0–100</Badge>
         </div>
 
-        <div className="h-72 w-full">
+        <div className="h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
@@ -77,11 +82,12 @@ export default function ParentSkillsPage() {
                 }}
               />
               <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-              <Line type="monotone" dataKey="Tư duy logic" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Giao tiếp" stroke="#6366f1" strokeWidth={2} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Cảm xúc xã hội" stroke="#f43f5e" strokeWidth={2} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Thích ứng" stroke="#eab308" strokeWidth={2} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="Vận động tinh" stroke="#06b6d4" strokeWidth={2} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="Tự nhận thức (SA)" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="Quản lý cảm xúc (ER)" stroke="#f43f5e" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="Tự quản lý (SM)" stroke="#8b5cf6" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="Giao tiếp (CO)" stroke="#06b6d4" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="Hợp tác & Đồng cảm (CE)" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="Giải quyết vấn đề (PD)" stroke="#eab308" strokeWidth={2.5} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -90,16 +96,21 @@ export default function ParentSkillsPage() {
       {/* Current Skill Breakdown Cards */}
       <div className="space-y-3">
         <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">
-          Chi tiết từng chỉ số năng lực
+          Chi tiết 6 năng lực hiện tại
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {currentSkills?.map((skill) => (
-            <Card key={skill.skillId} className="p-4 space-y-2">
+            <Card key={skill.skillCode} className="p-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                  {skill.skillName}
-                </span>
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    {skill.skillName}
+                  </span>
+                  <span className="text-[10px] ml-1.5 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold text-slate-500">
+                    {skill.skillCode}
+                  </span>
+                </div>
                 <span className="text-sm font-extrabold text-emerald-600">
                   {skill.score} / {skill.maxScore}
                 </span>
@@ -111,7 +122,7 @@ export default function ParentSkillsPage() {
                 />
               </div>
               <div className="text-[10px] text-slate-400 capitalize">
-                Cấp độ: {skill.level}
+                Cấp độ phát triển: <strong className="text-slate-600 dark:text-slate-300">{skill.level}</strong>
               </div>
             </Card>
           ))}
