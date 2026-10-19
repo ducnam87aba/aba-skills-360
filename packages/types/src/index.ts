@@ -3,6 +3,8 @@
  * Fully aligned with docs/assessment-spec.md, docs/api-contract.md, and docs/architecture.md
  */
 
+export * from './scoring';
+
 export type UserRole =
   | 'student'
   | 'parent'

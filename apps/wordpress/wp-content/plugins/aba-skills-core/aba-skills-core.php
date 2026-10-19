@@ -158,4 +158,7 @@ add_action('rest_api_init', function () {
 
     $parentController = new \ABA\Core\REST\ParentController();
     $parentController->registerRoutes();
+
+    $learningController = new \ABA\Core\REST\LearningController();
+    $learningController->registerRoutes();
 });

@@ -1,15 +1,27 @@
 'use client';
 
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@aba/api-client';
 import { Card, Badge, Button } from '@aba/ui';
-import { CheckSquare, Zap, Clock, CheckCircle2 } from 'lucide-react';
+import { CheckSquare, Zap, Clock, CheckCircle2, Sparkles } from 'lucide-react';
 
 export default function MissionsPage() {
+  const queryClient = useQueryClient();
+  const [claimedMap, setClaimedMap] = useState<Record<number, boolean>>({});
+
   const { data: missions, isLoading } = useQuery({
     queryKey: ['gamification-missions'],
     queryFn: () => api.gamification.getMissions(),
+  });
+
+  const claimMutation = useMutation({
+    mutationFn: (missionId: number) => api.gamification.claimMission(missionId),
+    onSuccess: (_, missionId) => {
+      setClaimedMap((prev) => ({ ...prev, [missionId]: true }));
+      queryClient.invalidateQueries({ queryKey: ['gamification-missions'] });
+      queryClient.invalidateQueries({ queryKey: ['student-me'] });
+    },
   });
 
   if (isLoading) {
@@ -24,7 +36,7 @@ export default function MissionsPage() {
             Nhiệm Vụ Hàng Ngày
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Hoàn thành các thử thách để nhận thêm điểm thưởng XP và duy trì tiến độ.
+            Hoàn thành các thử thách để nhận thêm điểm thưởng XP và ghi nhận vào sổ cái Gamification.
           </p>
         </div>
 
@@ -35,10 +47,17 @@ export default function MissionsPage() {
 
       <div className="space-y-3">
         {missions?.map((mission) => {
-          const progressPercent = Math.min(100, Math.round((mission.progress / mission.target) * 100));
+          const isClaimed = claimedMap[mission.id] || false;
+          const progressPercent = Math.min(
+            100,
+            Math.round((mission.progress / mission.target) * 100)
+          );
 
           return (
-            <Card key={mission.id} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <Card
+              key={mission.id}
+              className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+            >
               <div className="space-y-2 flex-1">
                 <div className="flex items-center gap-2">
                   <Badge variant={mission.type === 'daily' ? 'blue' : 'purple'}>
@@ -57,7 +76,9 @@ export default function MissionsPage() {
                 <div className="space-y-1">
                   <div className="flex justify-between text-[11px] font-semibold text-slate-400">
                     <span>Tiến độ</span>
-                    <span>{mission.progress} / {mission.target} ({progressPercent}%)</span>
+                    <span>
+                      {mission.progress} / {mission.target} ({progressPercent}%)
+                    </span>
                   </div>
                   <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                     <div
@@ -68,16 +89,26 @@ export default function MissionsPage() {
                 </div>
               </div>
 
-              <div className="flex items-center sm:flex-col justify-between sm:justify-center gap-2 sm:min-w-[120px]">
+              <div className="flex items-center sm:flex-col justify-between sm:justify-center gap-2 sm:min-w-[140px]">
                 <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
                   <Zap className="w-4 h-4 fill-emerald-500" />
                   +{mission.xpReward} XP
                 </div>
 
-                {mission.isCompleted ? (
+                {isClaimed ? (
                   <div className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
                     <CheckCircle2 className="w-4 h-4" /> Đã nhận thưởng
                   </div>
+                ) : mission.isCompleted ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => claimMutation.mutate(mission.id)}
+                    disabled={claimMutation.isPending}
+                    className="text-xs gap-1 shadow-md shadow-emerald-500/20 animate-pulse"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" /> Nhận thưởng
+                  </Button>
                 ) : (
                   <Button size="sm" variant="outline" disabled className="text-xs">
                     Chưa hoàn thành

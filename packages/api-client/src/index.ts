@@ -142,6 +142,15 @@ export class AbaApiClient {
       const query = studentId ? `?studentId=${studentId}` : '';
       return this.request<LearningPath>(`/learning/path${query}`);
     },
+    completeNode: async (nodeId: string, xpReward: number = 40) => {
+      return this.request<{ success: boolean; nodeId: string; xpAwarded: number; status: string }>(
+        `/lessons/${nodeId}/complete`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ xpReward }),
+        }
+      );
+    },
   };
 
   readonly parent = {
@@ -156,6 +165,14 @@ export class AbaApiClient {
   readonly gamification = {
     getMissions: async () => {
       return this.request<Mission[]>('/gamification/missions');
+    },
+    claimMission: async (missionId: number) => {
+      return this.request<{ success: boolean; missionId: number; xpAwarded: number }>(
+        `/gamification/missions/${missionId}/claim`,
+        {
+          method: 'POST',
+        }
+      );
     },
     getBadges: async () => {
       return this.request<Badge[]>('/gamification/badges');

@@ -428,6 +428,25 @@ export const handlers = [
     return HttpResponse.json(mockReports);
   }),
 
+  // Complete lesson node
+  http.post('*/wp-json/aba/v1/lessons/:id/complete', async ({ params }) => {
+    return HttpResponse.json({
+      success: true,
+      nodeId: params.id,
+      xpAwarded: 40,
+      status: 'completed',
+    });
+  }),
+
+  // Claim mission
+  http.post('*/wp-json/aba/v1/gamification/missions/:id/claim', async ({ params }) => {
+    return HttpResponse.json({
+      success: true,
+      missionId: Number(params.id),
+      xpAwarded: 25,
+    });
+  }),
+
   // Gamification Missions & Badges
   http.get('*/wp-json/aba/v1/gamification/missions', () => {
     return HttpResponse.json(mockMissions);
