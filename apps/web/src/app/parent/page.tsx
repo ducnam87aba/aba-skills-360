@@ -17,6 +17,9 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import type { CompetencyCode, SkillLevel } from '@aba/types';
+import { useParentChildren } from '../../features/parent/ParentChildrenContext';
+import { Avatar } from '../../components/Avatar';
+import { formatClassLabel } from '../../lib/classLabel';
 
 const COMP_COLORS: Record<CompetencyCode, string> = {
   SA: '#7c5cff', ER: '#ff5d73', SM: '#ffae00', CO: '#1cb0f6', CE: '#0aa96f', PD: '#4b6bff',
@@ -30,11 +33,9 @@ const LEVEL_LABEL: Record<SkillLevel, { text: string; variant: 'success' | 'blue
 };
 
 export default function ParentOverviewPage() {
-  const { data: children, isLoading } = useQuery({
-    queryKey: ['parent-children'],
-    queryFn: () => api.parent.getChildren(),
-  });
-  const student = children?.[0];
+  // The active child comes from the shared parent context (the switcher selects
+  // it); defaulting to the primary child so single-child parents are unchanged.
+  const { activeChild: student, isLoading } = useParentChildren();
 
   const { data: skills } = useQuery({
     queryKey: ['skills-current', student?.id],
@@ -67,10 +68,10 @@ export default function ParentOverviewPage() {
           <div className="absolute -right-10 -top-12 w-44 h-44 rounded-full bg-white/10 blur-2xl" />
           <div className="relative flex flex-col sm:flex-row sm:items-center gap-5">
             {student && (
-              <img
+              <Avatar
                 src={student.avatarUrl}
-                alt={student.fullName}
-                className="w-20 h-20 rounded-3xl object-cover ring-4 ring-white/40 shadow-lg"
+                name={student.fullName}
+                className="w-20 h-20 rounded-3xl object-cover ring-4 ring-white/40 shadow-lg text-2xl"
               />
             )}
             <div className="flex-1 min-w-0">
@@ -79,7 +80,7 @@ export default function ParentOverviewPage() {
               </div>
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight mt-1">{student?.fullName}</h1>
               <p className="text-brand-100 text-sm mt-0.5">
-                Lớp {student?.className} · {student?.schoolName}
+                {formatClassLabel(student?.className)} · {student?.schoolName}
               </p>
             </div>
             <div className="flex gap-2.5">

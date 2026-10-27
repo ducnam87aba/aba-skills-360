@@ -81,6 +81,31 @@ return function (AbaTestKit $kit): void {
         };
         $kit->check('teacher can view the learner (class scope, §8)', $teacher && $teacherSeesLearner());
 
+        // ---- PA41 multi-child parent link + §8 scoping ---------------------
+        $kit->check('parent is linked to a second child (switcher demo)', $parent && Authorization::isParentOf((int) $parent->ID, 2));
+        // §8 negative, drift-proof. Admin link-request approvals (PA42/PA43 E2E)
+        // legitimately ADD children to the demo parent on this shared live DB, so
+        // the seed guarantees only that children 1 & 2 are linked. Assert the list
+        // stays scoped by finding a live student the parent is NOT linked to and
+        // confirming isParentOf rejects it — access is per-link, never blanket.
+        if ($parent) {
+            $kids = (new StudentRepository())->getChildrenForParent((int) $parent->ID);
+            $kidIds = array_column($kids, 'id');
+            $kit->check('both seeded demo children are linked (primary + second)', in_array(1, $kidIds, true) && in_array(2, $kidIds, true));
+            $totalActive = (int) $GLOBALS['wpdb']->get_var("SELECT COUNT(*) FROM {$GLOBALS['wpdb']->prefix}aba_students WHERE status = 'active'");
+            $kit->check('parent child list stays scoped (not every student)', count($kids) >= 2 && count($kids) < $totalActive);
+            $kit->checkSame('the primary child sorts first', 1, (int) ($kids[0]['id'] ?? 0));
+            $notChildId = (int) $GLOBALS['wpdb']->get_var($GLOBALS['wpdb']->prepare(
+                "SELECT id FROM {$GLOBALS['wpdb']->prefix}aba_students WHERE status = 'active' AND id NOT IN (SELECT student_id FROM {$GLOBALS['wpdb']->prefix}aba_parent_student WHERE parent_user_id = %d AND status = 'active') ORDER BY id LIMIT 1",
+                (int) $parent->ID
+            ));
+            $kit->check('an unlinked student is NOT the parent\'s child (§8 negative)', $notChildId > 0 && !Authorization::isParentOf((int) $parent->ID, $notChildId));
+        }
+        $s2Scores = (int) $GLOBALS['wpdb']->get_var("SELECT COUNT(*) FROM {$GLOBALS['wpdb']->prefix}aba_skill_scores WHERE student_id = 2");
+        $s2Snaps = (int) $GLOBALS['wpdb']->get_var("SELECT COUNT(*) FROM {$GLOBALS['wpdb']->prefix}aba_skill_snapshots WHERE student_id = 2");
+        $kit->check('second child carries its own measured profile (skills)', $s2Scores >= 6);
+        $kit->check('second child has a longitudinal snapshot', $s2Snaps >= 1);
+
         // ---- Cohort clears the k-anonymity floor ---------------------------
         $service = new SkillsProfileService();
         $bm = $service->getClassBenchmark($studentId);

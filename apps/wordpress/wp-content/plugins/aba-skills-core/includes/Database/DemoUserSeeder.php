@@ -30,7 +30,7 @@ if (!defined('ABSPATH')) {
 }
 
 class DemoUserSeeder {
-    public const VERSION = 'demo-v2';
+    public const VERSION = 'demo-v5';
 
     /** Shared demo password (local environment only, mirrors the /login hint). */
     public const DEMO_PASSWORD = 'Aba@Demo2026';
@@ -105,6 +105,19 @@ class DemoUserSeeder {
         self::ensureCohort();
         self::ensureLearnerFixtures($ids['aba_student_1']);
         self::ensureLearnerGamification($ids['aba_student_1']);
+        // PA41: a parent may have more than one linked child. Learner 2 (a
+        // shipped student in a different class/school) is linked as the parent's
+        // secondary child and given its own measured profile, so the front-end
+        // child switcher exercises real per-child data + §8 scoping.
+        self::ensureSecondChildFixtures();
+        // PA42: the parent's "add a child" queue gets one genuine pending
+        // request (cohort learner ABA-2026-101, not linked to anyone) so the
+        // request → admin-approve → child-appears flow is demoable end to end.
+        self::ensureDemoLinkRequest($ids['aba_parent_1'], 'ABA-2026-101', 'mother');
+        // PA43: a SECOND, never-linked cohort learner stays pending so the new
+        // administrator review screen always has a live item to approve, even
+        // after the first demo request has already been decided.
+        self::ensureDemoLinkRequest($ids['aba_parent_1'], 'ABA-2026-106', 'father');
 
         // Demo identities now exist => the headless front end may authenticate
         // with app passwords over plain HTTP (see the plugin bootstrap filter).
@@ -167,20 +180,100 @@ class DemoUserSeeder {
             return;
         }
         $table = $wpdb->prefix . 'aba_parent_student';
-        $found = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table} WHERE parent_user_id = %d AND student_id = 1",
-            $parentUserId
-        ));
-        if ($found === 0) {
-            $wpdb->insert($table, [
-                'parent_user_id' => $parentUserId,
-                'student_id' => 1,
-                'relationship' => 'parent',
-                'is_primary' => 1,
-                'status' => 'active',
-            ], ['%d', '%d', '%s', '%d', '%s']);
+        // PA41: primary learner 1 plus a secondary learner 2, so the parent
+        // switcher has more than one child to choose between. Keyed by the
+        // (parent, student) pair, so a re-run never duplicates the link.
+        $links = [
+            [ 'student_id' => 1, 'relationship' => 'parent', 'is_primary' => 1 ],
+            [ 'student_id' => 2, 'relationship' => 'parent', 'is_primary' => 0 ],
+        ];
+        foreach ($links as $link) {
+            $found = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table} WHERE parent_user_id = %d AND student_id = %d",
+                $parentUserId,
+                $link['student_id']
+            ));
+            if ($found === 0) {
+                $wpdb->insert($table, [
+                    'parent_user_id' => $parentUserId,
+                    'student_id' => $link['student_id'],
+                    'relationship' => $link['relationship'],
+                    'is_primary' => $link['is_primary'],
+                    'status' => 'active',
+                ], ['%d', '%d', '%s', '%d', '%s']);
+            }
         }
         update_user_meta($parentUserId, 'aba_parent', 1);
+    }
+
+    /**
+     * PA41 — give the secondary learner (student 2) its own measured profile so
+     * switching children in the parent app renders distinct, real data. Scores
+     * and snapshots are upsert/insert-or-skip, so this is idempotent and touches
+     * only learner 2 (class 501 — it never pollutes learner 1's class-402
+     * k-anonymity cohort). No XP ledger rows are written: the activity feed for
+     * this child is deliberately empty, which the UI renders as an honest
+     * empty-state rather than fabricated history (§12).
+     */
+    private static function ensureSecondChildFixtures(): void {
+        $studentId = 2;
+        $scores = new \ABA\Core\Repositories\SkillScoreRepository();
+        // A different shape from learner 1 so the parent sees a real contrast.
+        $finalists = [ 'SA' => 74, 'ER' => 62, 'SM' => 55, 'CO' => 68, 'CE' => 80, 'PD' => 58 ];
+        foreach ($finalists as $code => $score) {
+            $scores->upsertScore($studentId, (string) $code, 'core_competency', (float) $score, self::levelFor((float) $score), 0, 'student', 'ABA-DEMO-1.0');
+        }
+
+        $snaps = new \ABA\Core\Repositories\SkillSnapshotRepository();
+        $aug = [];
+        foreach ($finalists as $code => $score) {
+            $aug[] = [ 'skillCode' => $code, 'score' => round($score * 0.86, 1), 'level' => self::levelFor($score * 0.86) ];
+        }
+        $oct = [];
+        foreach ($finalists as $code => $score) {
+            $oct[] = [ 'skillCode' => $code, 'score' => (float) $score, 'level' => self::levelFor((float) $score) ];
+        }
+        self::seedSnapshot($snaps, $studentId, self::SNAP_SESSION_BASE + 921, $aug, self::SNAP_AUG);
+        self::seedSnapshot($snaps, $studentId, self::SNAP_SESSION_BASE + 922, $oct, self::SNAP_OCT);
+    }
+
+    /**
+     * PA42/PA43 — one genuine pending link request for the demo parent, pointing
+     * at a cohort learner (an unlinked student). Insert-if-missing by the
+     * (parent, student) unique key; if the demo already approved it, the row is
+     * left in its real reviewed state — the seeder never rewinds history.
+     */
+    private static function ensureDemoLinkRequest(int $parentUserId, string $code, string $relationship): void {
+        global $wpdb;
+        if ($parentUserId <= 0) {
+            return;
+        }
+        $student = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, student_code FROM {$wpdb->prefix}aba_students WHERE student_code = %s AND status = 'active'",
+            $code
+        ), ARRAY_A);
+        if ($student === null) {
+            return;
+        }
+        $table = $wpdb->prefix . 'aba_parent_link_requests';
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$table} WHERE parent_user_id = %d AND student_id = %d",
+            $parentUserId,
+            (int) $student['id']
+        ));
+        if ($exists !== null) {
+            return;
+        }
+        $now = gmdate('Y-m-d H:i:s');
+        $wpdb->insert($table, [
+            'parent_user_id' => $parentUserId,
+            'student_id'     => (int) $student['id'],
+            'student_code'   => $student['student_code'],
+            'relationship'   => $relationship,
+            'status'         => 'pending',
+            'created_at'     => $now,
+            'updated_at'     => $now,
+        ], ['%d', '%d', '%s', '%s', '%s', '%s', '%s']);
     }
 
     /**

@@ -21,6 +21,7 @@ import type {
   ParentOverview,
   ParentActivityFeed,
   ParentActivityType,
+  ParentLinkRequest,
   RecommendationItem,
   RecommendationsResult,
   GradeGroup,
@@ -83,6 +84,56 @@ export const mockClassContext: ClassContext = {
   teacherId: 501,
   teacherName: 'Cô giáo Lan',
 };
+
+// PA41: a second linked child (different class + school) so the parent child
+// switcher renders in mock mode too. Mirrors the demo seeder linking learner 2.
+const mockClassContext2: ClassContext = {
+  id: 501,
+  schoolId: 20,
+  code: '5B1',
+  name: 'Lớp 5B1',
+  gradeGroup: '4_6',
+  academicYear: '2026-2027',
+  teacherId: 0,
+  teacherName: '',
+};
+
+export const mockSecondChild: StudentProfile = {
+  ...mockStudentProfile,
+  id: 2,
+  userId: 102,
+  studentCode: 'ABA-2026-002',
+  firstName: 'Mai',
+  lastName: 'Trần Nữ',
+  fullName: 'Trần Nữ Mai Lan',
+  gradeLevel: 5,
+  classId: 501,
+  className: '5B1',
+  schoolId: 20,
+  schoolName: 'Trường Tiểu Học Sao Mai',
+  totalXp: 300,
+  currentStreak: 0,
+  longestStreak: 0,
+  level: 6,
+};
+
+// PA42: mock link-request queue, mirroring the demo seeder — one genuine
+// pending request the parent can see, unlinked cohort codes are requestable,
+// and rows only ever carry the CODE (a pending request must not leak a learner
+// identity before approval, §8 — same as the real backend's toApiShape).
+const MOCK_LINKED_CODES = [mockStudentProfile.studentCode, mockSecondChild.studentCode];
+const MOCK_UNLINKED_CODES = ['ABA-2026-101', 'ABA-2026-102', 'ABA-2026-103', 'ABA-2026-104', 'ABA-2026-105', 'ABA-2026-106'];
+let mockLinkRequestId = 1;
+let mockLinkRequests: ParentLinkRequest[] = [
+  {
+    id: mockLinkRequestId,
+    studentCode: 'ABA-2026-101',
+    relationship: 'mother',
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
 
 /**
  * 6 Core Competencies defined in docs/assessment-spec.md Section 4
@@ -390,12 +441,16 @@ export const mockQuestionBatch: SessionQuestionItem[] = [
 ];
 
 function buildParentOverview(childId: number): ParentOverview {
+  // PA41: reflect the requested child so switching changes the overview, matching
+  // the server which returns a per-child overview (only for linked children).
+  const child = childId === mockSecondChild.id ? mockSecondChild : mockStudentProfile;
+  const ctx = child === mockSecondChild ? mockClassContext2 : mockClassContext;
   return {
-    student: { id: childId, displayName: mockStudentProfile.fullName, grade: mockStudentProfile.gradeLevel, class: mockClassContext },
+    student: { id: child.id, displayName: child.fullName, grade: child.gradeLevel, class: ctx },
     summary: {
-      currentStreak: mockStudentProfile.currentStreak,
-      totalXp: mockStudentProfile.totalXp,
-      weekly: { lessonsCompleted: 4, missionsCompleted: 2 },
+      currentStreak: child.currentStreak,
+      totalXp: child.totalXp,
+      weekly: { lessonsCompleted: child === mockSecondChild ? 1 : 4, missionsCompleted: child === mockSecondChild ? 0 : 2 },
     },
     skills: {
       topStrengths: [
@@ -489,6 +544,44 @@ export const mockSkillHistory: SkillHistoryEntry[] = [
   { snapshotId: 2, date: '2026-09-01', scores: { SA: 76, ER: 62, SM: 80, CO: 68, CE: 82, PD: 85 } },
   { snapshotId: 3, date: '2026-10-01', scores: { SA: 82, ER: 68, SM: 85, CO: 74, CE: 88, PD: 90 } },
 ];
+
+// PA41 mock parity: the second linked child carries its own measured profile
+// (same shapes, different numbers), mirroring the real seeder so switching
+// children visibly changes the parent screens.
+const SECOND_CHILD_SCORES: Record<CompetencyCode, number> = {
+  SA: 74, ER: 62, SM: 55, CO: 68, CE: 80, PD: 58,
+};
+
+function levelForDemo(score: number): SkillScore['level'] {
+  if (score >= 90) return 'advanced';
+  if (score >= 70) return 'proficient';
+  if (score >= 50) return 'developing';
+  return 'beginning';
+}
+
+function skillsForStudent(id: number): SkillScore[] {
+  if (id !== mockSecondChild.id) return mockSkillScores;
+  return mockSkillScores.map((s) => ({
+    ...s,
+    score: SECOND_CHILD_SCORES[s.skillCode],
+    level: levelForDemo(SECOND_CHILD_SCORES[s.skillCode]),
+  }));
+}
+
+function historyForStudent(id: number): SkillHistoryEntry[] {
+  if (id !== mockSecondChild.id) return mockSkillHistory;
+  const scale = (factor: number) =>
+    Object.fromEntries(
+      (Object.keys(SECOND_CHILD_SCORES) as CompetencyCode[]).map((code) => [
+        code,
+        Math.round(SECOND_CHILD_SCORES[code] * factor),
+      ]),
+    ) as Record<CompetencyCode, number>;
+  return [
+    { snapshotId: 11, date: '2026-08-01', scores: scale(0.86) },
+    { snapshotId: 12, date: '2026-10-01', scores: scale(1) },
+  ];
+}
 
 // Class benchmark (PA31, §11): the learner's current score (matches
 // mockSkillScores) beside an anonymized class mean. ER sits below the class
@@ -648,6 +741,12 @@ function daysAgo(days: number, hours = 9): string {
 }
 
 function buildParentActivityFeed(childId: number): ParentActivityFeed {
+  // PA41 parity: the seeder gives learner 2 no activity ledger rows, so the
+  // real backend derives an honest empty feed for that child — the mock mirrors
+  // it instead of inventing history (§12).
+  if (childId === mockSecondChild.id) {
+    return { studentId: childId, weeklyXp: 0, items: [] };
+  }
   const items = [
     // Recent completed lessons, titled like LearningPathService::titleForNode.
     ...mockLessons.slice(0, 3).map((l, i): ParentActivityFeed['items'][number] => ({
@@ -783,7 +882,9 @@ export const handlers = [
 
   // Current Skills
   http.get('*/wp-json/aba/v1/skills/current', () => HttpResponse.json(mockSkillScores)),
-  http.get('*/wp-json/aba/v1/students/:id/skills/current', () => HttpResponse.json(mockSkillScores)),
+  http.get('*/wp-json/aba/v1/students/:id/skills/current', ({ params }) =>
+    HttpResponse.json(skillsForStudent(Number(params.id)))
+  ),
 
   // Recommendations (deterministic engine parity, PA4)
   http.get('*/wp-json/aba/v1/recommendations', ({ request }) => {
@@ -804,7 +905,9 @@ export const handlers = [
   // Skill History (longitudinal, §11) — self and by-id share one source so the
   // learner profile and parent view stay consistent (mirror of the backend).
   http.get('*/wp-json/aba/v1/skills/history', () => HttpResponse.json(mockSkillHistory)),
-  http.get('*/wp-json/aba/v1/students/:id/skills/history', () => HttpResponse.json(mockSkillHistory)),
+  http.get('*/wp-json/aba/v1/students/:id/skills/history', ({ params }) =>
+    HttpResponse.json(historyForStudent(Number(params.id)))
+  ),
 
   // Class benchmark (anonymized class average, PA31) — self and by-id share one source.
   http.get('*/wp-json/aba/v1/skills/benchmark', () => HttpResponse.json(mockClassBenchmark)),
@@ -903,8 +1006,43 @@ export const handlers = [
     });
   }),
 
-  // Parent Children
-  http.get('*/wp-json/aba/v1/parent/children', () => HttpResponse.json([{ ...mockStudentProfile, class: mockClassContext }])),
+  // Parent Children (PA41: two linked children so the switcher demo renders)
+  http.get('*/wp-json/aba/v1/parent/children', () => HttpResponse.json([
+    { ...mockStudentProfile, class: mockClassContext },
+    { ...mockSecondChild, class: mockClassContext2 },
+  ])),
+
+  // PA42: parent link-request queue, mirroring the WP flow — submitting only
+  // joins a queue (admin approval grants access in the real backend), the pair
+  // is idempotent, unknown codes 404, and rows never leak a learner identity.
+  http.post('*/wp-json/aba/v1/parent/link-requests', async ({ request }) => {
+    const body = (await request.json()) as { studentCode?: string; relationship?: string };
+    const code = (body.studentCode ?? '').trim().toUpperCase();
+    if (MOCK_LINKED_CODES.includes(code)) {
+      return HttpResponse.json({ status: 'already_linked', request: null });
+    }
+    if (!MOCK_UNLINKED_CODES.includes(code)) {
+      return HttpResponse.json(
+        { error: { code: 'ABA_STUDENT_NOT_FOUND', message: 'Student code not found.' } },
+        { status: 404 },
+      );
+    }
+    const pending = mockLinkRequests.find((r) => r.studentCode === code && r.status === 'pending');
+    if (pending) return HttpResponse.json({ status: 'exists', request: pending });
+    const now = new Date().toISOString();
+    const created: ParentLinkRequest = {
+      id: ++mockLinkRequestId,
+      studentCode: code,
+      relationship: body.relationship ?? 'guardian',
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+    };
+    mockLinkRequests = [created, ...mockLinkRequests];
+    return HttpResponse.json({ status: 'created', request: created }, { status: 201 });
+  }),
+
+  http.get('*/wp-json/aba/v1/parent/link-requests', () => HttpResponse.json(mockLinkRequests)),
 
   // Parent child overview (§37)
   http.get('*/wp-json/aba/v1/parent/children/:id/overview', ({ params }) => {
@@ -915,7 +1053,7 @@ export const handlers = [
   // mirroring the server's requireParent + requireViewStudent checks (§8).
   http.get('*/wp-json/aba/v1/parent/children/:id/activities', ({ params }) => {
     const childId = Number(params.id);
-    if (childId !== mockStudentProfile.id) {
+    if (childId !== mockStudentProfile.id && childId !== mockSecondChild.id) {
       return HttpResponse.json({ error: { code: 'ABA_FORBIDDEN', message: 'This student is not your linked child.' } }, { status: 403 });
     }
     return HttpResponse.json(buildParentActivityFeed(childId));

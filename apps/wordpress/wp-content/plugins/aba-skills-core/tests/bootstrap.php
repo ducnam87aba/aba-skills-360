@@ -158,6 +158,7 @@ final class AbaTestKit
             'aba_reports',
             'aba_events',
             'aba_assessment_sessions',
+            'aba_parent_link_requests',
         ] as $logical) {
             $table = $p . $logical;
             if ($this->tableExists($table)) {
@@ -366,6 +367,10 @@ final class AbaTestKit
         global $wpdb;
         // A parent may have child links; drop them so no orphan row survives.
         $wpdb->delete($wpdb->prefix . 'aba_parent_student', ['parent_user_id' => $userId], ['%d']);
+        // PA42: and any link requests they submitted (zero residue).
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($wpdb->prefix . 'aba_parent_link_requests'))) !== null) {
+            $wpdb->delete($wpdb->prefix . 'aba_parent_link_requests', ['parent_user_id' => $userId], ['%d']);
+        }
         $wpdb->delete($wpdb->prefix . 'usermeta', ['user_id' => $userId], ['%d']);
         $wpdb->delete($wpdb->prefix . 'users', ['ID' => $userId], ['%d']);
     }

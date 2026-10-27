@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 
 class MigrationRunner {
     private const OPTION_KEY = 'aba_schema_version';
-    private const LATEST = 6;
+    private const LATEST = 7;
 
     public static function run(): void {
         $current = (int)get_option(self::OPTION_KEY, 0);
@@ -51,6 +51,9 @@ class MigrationRunner {
                 break;
             case 6:
                 self::migration6PowerUps();
+                break;
+            case 7:
+                self::migration7ParentLinkRequests();
                 break;
         }
     }
@@ -207,6 +210,36 @@ class MigrationRunner {
             PRIMARY KEY (id),
             UNIQUE KEY uk_powerup_idem (student_id, kind, reason),
             KEY idx_powerup_student (student_id, kind)
+        ) {$charset};";
+        dbDelta($sql);
+    }
+
+    /**
+     * v7 — Parent link-request queue (PA42). A parent submits a student code;
+     * the request waits here until a platform administrator approves it, which
+     * is what writes the wp_aba_parent_student row (§8: a link is never
+     * self-service). One request per (parent, student) pair via unique key, so
+     * double submits stay idempotent; status is the only mutable state.
+     */
+    private static function migration7ParentLinkRequests(): void {
+        global $wpdb;
+        $charset = $wpdb->get_charset_collate();
+        $p = $wpdb->prefix;
+
+        $sql = "CREATE TABLE {$p}aba_parent_link_requests (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            parent_user_id BIGINT UNSIGNED NOT NULL,
+            student_id BIGINT UNSIGNED NOT NULL,
+            student_code VARCHAR(64) NOT NULL,
+            relationship VARCHAR(20) NOT NULL DEFAULT 'guardian',
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            reviewed_by BIGINT UNSIGNED NULL,
+            reviewed_at DATETIME NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY uk_plr_parent_student (parent_user_id, student_id),
+            KEY idx_plr_status (status)
         ) {$charset};";
         dbDelta($sql);
     }

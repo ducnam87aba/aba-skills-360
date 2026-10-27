@@ -152,6 +152,15 @@ register_deactivation_hook(__FILE__, function () {
 });
 
 /**
+ * PA43 — administration-only screens (AGENTS.md §2 permits WP admin UI, never
+ * the student/parent application). Registers the hooks; capability checks inside
+ * gate what any given user can open. Kept out of the REST/front-end surface.
+ */
+add_action('init', function () {
+    \ABA\Core\Admin\LinkRequestsAdminPage::init();
+});
+
+/**
  * Initialize Plugin & REST APIs
  */
 add_action('init', function () {

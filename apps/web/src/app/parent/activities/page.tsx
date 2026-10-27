@@ -6,6 +6,7 @@ import { api } from '@aba/api-client';
 import { Card, Badge, SectionHeader } from '@aba/ui';
 import { Zap, BookOpen, Award, CheckCircle2 } from 'lucide-react';
 import type { ParentActivityType } from '@aba/types';
+import { useParentChildren } from '../../../features/parent/ParentChildrenContext';
 
 const TYPE_META: Record<ParentActivityType, { icon: React.ReactNode; color: string; label: string }> = {
   lesson: { icon: <BookOpen className="w-5 h-5" />, color: '#1cb0f6', label: 'Bài học' },
@@ -25,13 +26,9 @@ function formatOccurredAt(iso: string | null): string {
 }
 
 export default function ParentActivitiesPage() {
-  // Resolve the child from the parent link instead of hardcoding an id, so the
-  // same page is correct against the real (permission-checked) backend.
-  const { data: children, isLoading: isChildrenLoading } = useQuery({
-    queryKey: ['parent-children'],
-    queryFn: () => api.parent.getChildren(),
-  });
-  const childId = children?.[0]?.id;
+  // The active child comes from the shared parent context (switcher-selected,
+  // server-scoped per §8) instead of pinning to the first linked child.
+  const { activeChildId: childId, isLoading: isChildrenLoading } = useParentChildren();
 
   const { data: feed, isLoading: isFeedLoading } = useQuery({
     queryKey: ['parent-activities', childId],

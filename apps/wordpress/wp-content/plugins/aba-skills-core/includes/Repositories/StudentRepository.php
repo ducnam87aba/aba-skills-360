@@ -38,13 +38,28 @@ class StudentRepository {
         return $row ?: null;
     }
 
+    /**
+     * PA42 — resolve a learner by the human-facing student code printed on
+     * their school record (e.g. ABA-2026-101). Exact, case-insensitive match on
+     * active rows only; the link-request flow uses this BEFORE any link exists.
+     */
+    public function findByCode(string $code): ?array {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            $this->baseSelect() . "WHERE s.student_code = %s AND s.status = 'active' LIMIT 1",
+            $code
+        ), ARRAY_A);
+        return $row ?: null;
+    }
+
     public function getChildrenForParent(int $parentUserId): array {
         global $wpdb;
         $p = $wpdb->prefix;
 
         $sql = $this->baseSelect()
             . "INNER JOIN {$p}aba_parent_student ps ON s.id = ps.student_id
-               WHERE ps.parent_user_id = %d AND ps.status = 'active'";
+               WHERE ps.parent_user_id = %d AND ps.status = 'active'
+               ORDER BY ps.is_primary DESC, s.id ASC";
 
         $rows = $wpdb->get_results($wpdb->prepare($sql, $parentUserId), ARRAY_A) ?: [];
         return array_map([$this, 'toApiShape'], $rows);

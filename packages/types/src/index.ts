@@ -516,6 +516,26 @@ export interface ParentActivityFeed {
   items: ParentActivity[];
 }
 
+// PA42 — parent link-request queue. A submission is only a REQUEST: the
+// parent_student access row appears after an administrator approves it (§8).
+// Rows deliberately carry no learner name/id before approval — just the code
+// the parent typed.
+export type ParentLinkRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ParentLinkRequest {
+  id: number;
+  studentCode: string;
+  relationship: string;
+  status: ParentLinkRequestStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ParentLinkRequestResult {
+  status: 'created' | 'exists' | 'already_linked';
+  request: ParentLinkRequest | null;
+}
+
 export interface QuestionBatch {
   items: SessionQuestionItem[];
   cursor: string | null;

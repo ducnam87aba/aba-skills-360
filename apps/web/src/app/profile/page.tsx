@@ -16,6 +16,8 @@ import {
   Legend,
 } from 'recharts';
 import type { CompetencyCode, SkillLevel } from '@aba/types';
+import { Avatar } from '../../components/Avatar';
+import { formatClassLabel } from '../../lib/classLabel';
 
 const COMP_COLORS: Record<CompetencyCode, string> = {
   SA: '#7c5cff', ER: '#ff5d73', SM: '#ffae00', CO: '#1cb0f6', CE: '#0aa96f', PD: '#4b6bff',
@@ -49,7 +51,7 @@ export default function ProfilePage() {
       <Card className="p-6 sm:p-7 flex flex-col sm:flex-row items-center gap-6">
         <div className="relative">
           <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-brand-400 to-brand-600 p-1 shadow-[0_5px_0_0_#036c4a]">
-            <img src={student?.avatarUrl} alt={student?.fullName} className="w-full h-full object-cover rounded-[20px]" />
+            <Avatar src={student?.avatarUrl} name={student?.fullName} className="w-full h-full object-cover rounded-[20px] text-3xl" />
           </div>
           <div className="absolute -bottom-2 -right-2 px-2.5 py-1 rounded-xl bg-sm text-white text-xs font-black shadow-[0_3px_0_0_#d98c00]">
             Lv {student?.level ?? 1}
@@ -63,7 +65,7 @@ export default function ProfilePage() {
           </p>
           <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-3 text-xs font-bold text-slate-500">
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50"><School className="w-4 h-4 text-brand-500" /> {student?.schoolName}</span>
-            <Badge variant="purple">Khối {student?.gradeLevel} · Lớp {student?.className}</Badge>
+            <Badge variant="purple">Khối {student?.gradeLevel} · {formatClassLabel(student?.className)}</Badge>
           </div>
         </div>
 

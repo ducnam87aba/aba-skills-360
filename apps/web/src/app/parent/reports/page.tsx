@@ -29,6 +29,7 @@ import {
 } from 'recharts';
 import type { CompetencyCode } from '@aba/types';
 import { reportToCsv, reportCsvFilename, downloadCsv, printReport, skillsHistoryToCsv, skillsHistoryCsvFilename } from '../../../lib/reportExport';
+import { useParentChildren } from '../../../features/parent/ParentChildrenContext';
 
 const COMP_COLORS: Record<CompetencyCode, string> = {
   SA: '#7c5cff', ER: '#ff5d73', SM: '#ffae00', CO: '#1cb0f6', CE: '#0aa96f', PD: '#4b6bff',
@@ -42,13 +43,9 @@ const COMP_NAMES: Record<string, string> = {
 const COMP_TREND: CompetencyCode[] = ['SA', 'ER', 'SM', 'CO', 'CE', 'PD'];
 
 export default function ParentReportsPage() {
-  // Resolve the child from the parent link instead of hardcoding an id, so the
-  // same page is correct against the real (permission-checked) backend.
-  const { data: children, isLoading: isChildrenLoading } = useQuery({
-    queryKey: ['parent-children'],
-    queryFn: () => api.parent.getChildren(),
-  });
-  const childId = children?.[0]?.id;
+  // The active child comes from the shared parent context (switcher-selected,
+  // server-scoped per §8) instead of pinning to the first linked child.
+  const { activeChildId: childId, isLoading: isChildrenLoading } = useParentChildren();
 
   const { data: reports, isLoading: isReportsLoading } = useQuery({
     queryKey: ['student-reports', childId],

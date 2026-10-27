@@ -6,6 +6,7 @@ use ABA\Core\Repositories\StudentRepository;
 use ABA\Core\Services\SkillsProfileService;
 use ABA\Core\Services\RecommendationService;
 use ABA\Core\Services\ParentOverviewService;
+use ABA\Core\Services\ParentLinkRequestService;
 use ABA\Core\Services\ReportService;
 use ABA\Core\Auth\Authorization;
 use WP_REST_Request;
@@ -17,6 +18,7 @@ class ParentController {
     private RecommendationService $recService;
     private ParentOverviewService $overviewService;
     private ReportService $reportService;
+    private ParentLinkRequestService $linkRequestService;
 
     public function __construct() {
         $this->studentRepo = new StudentRepository();
@@ -24,6 +26,7 @@ class ParentController {
         $this->recService = new RecommendationService();
         $this->overviewService = new ParentOverviewService();
         $this->reportService = new ReportService();
+        $this->linkRequestService = new ParentLinkRequestService();
     }
 
     public function registerRoutes(): void {
@@ -83,6 +86,58 @@ class ParentController {
             'methods' => 'GET',
             'callback' => [$this, 'getChildActivities'],
             'permission_callback' => [Authorization::class, 'requireParent'],
+        ]);
+
+        // PA42 — parent link-request queue. Submitting never grants access by
+        // itself; only an administrator approval writes the parent_student row.
+        register_rest_route($namespace, '/parent/link-requests', [
+            'methods' => 'POST',
+            'callback' => [$this, 'createLinkRequest'],
+            'permission_callback' => [Authorization::class, 'requireParent'],
+            'args' => [
+                'studentCode' => [
+                    'required' => true,
+                    'sanitize_callback' => 'sanitize_text_field',
+                    'validate_callback' => static fn($v): bool => is_string($v) && preg_match('/^[A-Za-z0-9\-_]{4,64}$/', $v) === 1,
+                ],
+                'relationship' => [
+                    'required' => false,
+                    'default' => 'guardian',
+                    'sanitize_callback' => 'sanitize_text_field',
+                ],
+            ],
+        ]);
+        register_rest_route($namespace, '/parent/link-requests', [
+            'methods' => 'GET',
+            'callback' => [$this, 'listLinkRequests'],
+            'permission_callback' => [Authorization::class, 'requireParent'],
+        ]);
+        register_rest_route($namespace, '/parent/link-requests/(?P<id>\d+)/approve', [
+            'methods' => 'POST',
+            'callback' => [$this, 'approveLinkRequest'],
+            'permission_callback' => [Authorization::class, 'requireLinkAdministrator'],
+        ]);
+        register_rest_route($namespace, '/parent/link-requests/(?P<id>\d+)/reject', [
+            'methods' => 'POST',
+            'callback' => [$this, 'rejectLinkRequest'],
+            'permission_callback' => [Authorization::class, 'requireLinkAdministrator'],
+        ]);
+
+        // PA43 — the administrator review queue (all parents' pending requests).
+        // Platform-user only, stricter than the roster cap; the WP admin screen
+        // and any tooling read the same shape (§8).
+        register_rest_route($namespace, '/admin/parent-link-requests', [
+            'methods' => 'GET',
+            'callback' => [$this, 'adminListLinkRequests'],
+            'permission_callback' => [Authorization::class, 'requireLinkAdministrator'],
+            'args' => [
+                'status' => [
+                    'required' => false,
+                    'default' => 'pending',
+                    'sanitize_callback' => 'sanitize_text_field',
+                    'validate_callback' => static fn($v): bool => is_string($v) && in_array($v, ['pending', 'approved', 'rejected', 'all'], true),
+                ],
+            ],
         ]);
     }
 
@@ -195,5 +250,67 @@ class ParentController {
         }
         $delivery = $this->reportService->markRead($studentId, $reportId, \get_current_user_id() ?: null);
         return rest_ensure_response(['reportId' => $reportId, 'delivery' => $delivery]);
+    }
+
+    // ---- PA42: parent link-request queue ----------------------------------
+
+    public function createLinkRequest(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        $auth = Authorization::requireParent();
+        if (is_wp_error($auth)) {
+            return $auth;
+        }
+        $result = $this->linkRequestService->submit(
+            \get_current_user_id(),
+            (string)$request->get_param('studentCode'),
+            (string)$request->get_param('relationship')
+        );
+        switch ($result['status']) {
+            case 'not_found':
+                // Same answer for "no such learner" regardless of why — never
+                // confirms or denies the existence of an account (§8).
+                return new \WP_Error('ABA_STUDENT_NOT_FOUND', 'Student code not found.', ['status' => 404]);
+            case 'already_linked':
+                return rest_ensure_response(['status' => 'already_linked', 'request' => null]);
+            case 'exists':
+                return rest_ensure_response(['status' => 'exists', 'request' => $result['request']]);
+            default:
+                return new \WP_REST_Response(['status' => 'created', 'request' => $result['request']], 201);
+        }
+    }
+
+    public function listLinkRequests(): WP_REST_Response|\WP_Error {
+        $auth = Authorization::requireParent();
+        if (is_wp_error($auth)) {
+            return $auth;
+        }
+        // Own queue only — the repository scopes by the *server's* current user (§8).
+        return rest_ensure_response($this->linkRequestService->listForParent(\get_current_user_id()));
+    }
+
+    public function approveLinkRequest(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        $approved = $this->linkRequestService->approve((int)$request->get_param('id'));
+        if ($approved === null) {
+            return new \WP_Error('ABA_LINK_REQUEST_INVALID', 'Request not found or already reviewed.', ['status' => 404]);
+        }
+        return rest_ensure_response(['status' => 'approved', 'request' => $approved]);
+    }
+
+    public function rejectLinkRequest(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        $rejected = $this->linkRequestService->reject((int)$request->get_param('id'));
+        if ($rejected === null) {
+            return new \WP_Error('ABA_LINK_REQUEST_INVALID', 'Request not found or already reviewed.', ['status' => 404]);
+        }
+        return rest_ensure_response(['status' => 'rejected', 'request' => $rejected]);
+    }
+
+    /**
+     * PA43 — administrator's cross-parent review queue. Permission is enforced
+     * by requireLinkAdministrator before this runs, so the wider (parent +
+     * learner) projection is safe to return here (§8). 'all' lists every state.
+     */
+    public function adminListLinkRequests(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        $status = (string)$request->get_param('status');
+        $rows = $this->linkRequestService->listForAdmin($status === 'all' ? '' : $status);
+        return rest_ensure_response($rows);
     }
 }

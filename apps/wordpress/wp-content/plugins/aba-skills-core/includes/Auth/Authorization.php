@@ -314,4 +314,22 @@ class Authorization {
         }
         return true;
     }
+
+    /**
+     * PA42 — only a platform administrator may approve/reject a parent link
+     * request. Deliberately stricter than the roster cap: a class teacher can
+     * read their roster but must not be able to mint parent access to any
+     * learner (§8 — a parent-child link is an access grant, never self-service
+     * and never school-scoped staff work). A parent can also never review their
+     * own request: requireParent users do not hold manage_options.
+     */
+    public static function requireLinkAdministrator(): bool|\WP_Error {
+        if (!is_user_logged_in()) {
+            return aba_error('ABA_UNAUTHENTICATED', 'Authentication required.', 401);
+        }
+        if (!_aba_is_platform_user(get_current_user_id())) {
+            return aba_error('ABA_FORBIDDEN', 'Only a platform administrator can review link requests.', 403);
+        }
+        return true;
+    }
 }

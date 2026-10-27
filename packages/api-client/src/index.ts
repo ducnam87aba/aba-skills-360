@@ -24,6 +24,8 @@ import type {
   SessionState,
   ParentOverview,
   ParentActivityFeed,
+  ParentLinkRequest,
+  ParentLinkRequestResult,
   RecommendationsResult,
 } from '@aba/types';
 
@@ -358,6 +360,17 @@ export class AbaApiClient {
         `/students/${studentId}/reports/${reportId}/read`,
         { method: 'POST', body: JSON.stringify({}) }
       );
+    },
+    // PA42: "add a child" is request-then-approve — submitting a student code
+    // only queues a request; an administrator approval grants access (§8).
+    createLinkRequest: async (studentCode: string, relationship: 'father' | 'mother' | 'guardian') => {
+      return this.request<ParentLinkRequestResult>('/parent/link-requests', {
+        method: 'POST',
+        body: JSON.stringify({ studentCode, relationship }),
+      });
+    },
+    getLinkRequests: async () => {
+      return this.request<ParentLinkRequest[]>('/parent/link-requests');
     },
   };
 

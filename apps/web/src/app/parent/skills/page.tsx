@@ -16,6 +16,7 @@ import {
   Legend,
 } from 'recharts';
 import type { CompetencyCode, SkillLevel } from '@aba/types';
+import { useParentChildren } from '../../../features/parent/ParentChildrenContext';
 
 const COMPS: { code: CompetencyCode; name: string; color: string }[] = [
   { code: 'SA', name: 'Tự nhận thức', color: '#7c5cff' },
@@ -34,13 +35,9 @@ const LEVEL_LABEL: Record<SkillLevel, { text: string; variant: 'success' | 'blue
 };
 
 export default function ParentSkillsPage() {
-  // Resolve the child from the parent link instead of hardcoding an id, so the
-  // same page is correct against the real (permission-checked) backend (§8).
-  const { data: children, isLoading: isChildrenLoading } = useQuery({
-    queryKey: ['parent-children'],
-    queryFn: () => api.parent.getChildren(),
-  });
-  const childId = children?.[0]?.id;
+  // The active child comes from the shared parent context, which only ever
+  // holds children the permission-checked /parent/children endpoint returned (§8).
+  const { activeChildId: childId, isLoading: isChildrenLoading } = useParentChildren();
 
   const { data: history, isLoading } = useQuery({
     queryKey: ['skills-history', childId],
