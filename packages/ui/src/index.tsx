@@ -1,42 +1,46 @@
 import React from 'react';
 
+/* ------------------------------------------------------------------ */
+/*  Button — chunky, "pressable" 3D surface (ABA design language)      */
+/* ------------------------------------------------------------------ */
+
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'success';
+  variant?: 'primary' | 'blue' | 'purple' | 'amber' | 'rose' | 'outline' | 'ghost';
   size?: 'sm' | 'md' | 'lg';
+  block?: boolean;
 }
+
+const BUTTON_VARIANTS: Record<NonNullable<ButtonProps['variant']>, { cls: string; edge: string }> = {
+  primary: { cls: 'bg-brand-500 hover:bg-brand-400 text-white', edge: '#036c4a' },
+  blue: { cls: 'bg-co hover:brightness-110 text-white', edge: '#0d8ec7' },
+  purple: { cls: 'bg-sa hover:brightness-110 text-white', edge: '#5b3fd6' },
+  amber: { cls: 'bg-sm hover:brightness-110 text-white', edge: '#d98c00' },
+  rose: { cls: 'bg-er hover:brightness-110 text-white', edge: '#d63f54' },
+  outline: { cls: 'bg-white text-brand-600 border-2 border-brand-200 hover:bg-brand-50', edge: '#cfeee0' },
+  ghost: { cls: 'bg-transparent text-slate-500 hover:bg-slate-100', edge: 'transparent' },
+};
+
+const BUTTON_SIZES = {
+  sm: 'px-3.5 py-2 text-xs rounded-xl',
+  md: 'px-5 py-3 text-sm rounded-xl',
+  lg: 'px-6 py-4 text-base rounded-2xl',
+};
 
 export function Button({
   children,
   className = '',
   variant = 'primary',
   size = 'md',
+  block = false,
+  style,
   ...props
 }: ButtonProps) {
-  const base =
-    'inline-flex items-center justify-center font-semibold transition-all duration-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none active:scale-95';
-
-  const variants = {
-    primary:
-      'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20 focus:ring-emerald-500',
-    secondary:
-      'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-500/20 focus:ring-indigo-500',
-    outline:
-      'border-2 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-transparent text-slate-800 dark:text-slate-100',
-    ghost:
-      'bg-transparent hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200',
-    success:
-      'bg-green-600 hover:bg-green-500 text-white shadow-md shadow-green-500/20',
-  };
-
-  const sizes = {
-    sm: 'px-3 py-1.5 text-xs',
-    md: 'px-5 py-2.5 text-sm',
-    lg: 'px-6 py-3.5 text-base',
-  };
-
+  const v = BUTTON_VARIANTS[variant];
+  const isFlat = variant === 'outline' || variant === 'ghost';
   return (
     <button
-      className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+      className={`pressable inline-flex items-center justify-center gap-2 font-extrabold uppercase tracking-wide transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-200 disabled:cursor-not-allowed ${v.cls} ${BUTTON_SIZES[size]} ${block ? 'w-full' : ''} ${isFlat ? '' : 'pressable'} ${className}`}
+      style={{ ...(style as React.CSSProperties), ['--press-edge' as any]: isFlat ? 'transparent' : v.edge }}
       {...props}
     >
       {children}
@@ -44,55 +48,207 @@ export function Button({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Card                                                               */
+/* ------------------------------------------------------------------ */
+
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
-  glass?: boolean;
+  hover?: boolean;
 }
 
-export function Card({
-  children,
-  className = '',
-  glass = false,
-  ...props
-}: CardProps) {
-  const base = glass
-    ? 'backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border border-white/20 dark:border-slate-800/80 shadow-xl rounded-2xl'
-    : 'bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm rounded-2xl';
-
+export function Card({ children, className = '', hover = false, ...props }: CardProps) {
   return (
-    <div className={`${base} ${className}`} {...props}>
+    <div
+      className={`bg-white rounded-2xl border border-black/5 shadow-card ${hover ? 'transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5' : ''} ${className}`}
+      {...props}
+    >
       {children}
     </div>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Badge                                                              */
+/* ------------------------------------------------------------------ */
+
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  variant?: 'default' | 'success' | 'warning' | 'purple' | 'blue';
+  variant?: 'default' | 'success' | 'warning' | 'purple' | 'blue' | 'rose';
 }
 
-export function Badge({
-  children,
-  className = '',
-  variant = 'default',
-  ...props
-}: BadgeProps) {
-  const variants = {
-    default: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
-    success:
-      'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/50',
-    warning:
-      'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-800/50',
-    purple:
-      'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 border border-purple-200/50 dark:border-purple-800/50',
-    blue:
-      'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border border-sky-200/50 dark:border-sky-800/50',
-  };
+const BADGE_VARIANTS: Record<NonNullable<BadgeProps['variant']>, string> = {
+  default: 'bg-slate-100 text-slate-600',
+  success: 'bg-brand-100 text-brand-700',
+  warning: 'bg-amber-100 text-amber-700',
+  purple: 'bg-violet-100 text-violet-700',
+  blue: 'bg-sky-100 text-sky-700',
+  rose: 'bg-rose-100 text-rose-700',
+};
 
+export function Badge({ children, className = '', variant = 'default', ...props }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide ${variants[variant]} ${className}`}
+      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wide ${BADGE_VARIANTS[variant]} ${className}`}
       {...props}
     >
       {children}
     </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  ProgressBar — glossy rounded track with animated fill              */
+/* ------------------------------------------------------------------ */
+
+export interface ProgressBarProps {
+  value: number;
+  max?: number;
+  color?: string;
+  height?: number;
+  className?: string;
+}
+
+export function ProgressBar({ value, max = 100, color = '#0aa96f', height = 12, className = '' }: ProgressBarProps) {
+  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  return (
+    <div
+      className={`w-full rounded-full bg-slate-100 overflow-hidden ${className}`}
+      style={{ height }}
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemax={max}
+    >
+      <div
+        className="relative h-full rounded-full transition-[width] duration-700 ease-out"
+        style={{ width: `${pct}%`, backgroundColor: color }}
+      >
+        <span className="absolute inset-x-0 top-0 h-1/2 rounded-t-full bg-white/30" />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  SkillRing — circular competency gauge                             */
+/* ------------------------------------------------------------------ */
+
+export interface SkillRingProps {
+  value: number;
+  max?: number;
+  color?: string;
+  size?: number;
+  stroke?: number;
+  label?: React.ReactNode;
+  sublabel?: React.ReactNode;
+}
+
+export function SkillRing({
+  value,
+  max = 100,
+  color = '#0aa96f',
+  size = 96,
+  stroke = 10,
+  label,
+  sublabel,
+}: SkillRingProps) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(1, value / max));
+  const offset = c * (1 - pct);
+  return (
+    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#eef2f0" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          style={{ transition: 'stroke-dashoffset 0.8s cubic-bezier(0.22,1,0.36,1)' }}
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center leading-none">
+        <span className="text-xl font-black text-slate-800">{label ?? Math.round(value)}</span>
+        {sublabel ? <span className="text-[10px] font-bold text-slate-400 mt-0.5">{sublabel}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  StreakCalendar — last-7-days activity dots                        */
+/* ------------------------------------------------------------------ */
+
+export interface StreakDay {
+  label: string;
+  active: boolean;
+}
+
+export function StreakCalendar({ days }: { days: StreakDay[] }) {
+  return (
+    <div className="flex items-center justify-between gap-1.5">
+      {days.map((d, i) => (
+        <div key={i} className="flex flex-col items-center gap-1 flex-1">
+          <div
+            className={`w-full aspect-square max-w-[34px] rounded-xl flex items-center justify-center text-sm font-black transition ${
+              d.active ? 'bg-sm text-white shadow-[0_3px_0_0_#d98c00]' : 'bg-slate-100 text-slate-300'
+            }`}
+            title={d.label}
+          >
+            {d.active ? '🔥' : '·'}
+          </div>
+          <span className="text-[10px] font-bold text-slate-400">{d.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  StatPill — compact colored metric (streak / XP / gems …)           */
+/* ------------------------------------------------------------------ */
+
+export interface StatPillProps {
+  icon: React.ReactNode;
+  value: React.ReactNode;
+  color: string;
+  title?: string;
+}
+
+export function StatPill({ icon, value, color, title }: StatPillProps) {
+  return (
+    <div className="flex items-center gap-1.5 font-black" style={{ color }} title={title}>
+      <span className="text-base leading-none">{icon}</span>
+      <span className="tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  SectionHeader                                                      */
+/* ------------------------------------------------------------------ */
+
+export interface SectionHeaderProps {
+  eyebrow?: React.ReactNode;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  action?: React.ReactNode;
+  className?: string;
+}
+
+export function SectionHeader({ eyebrow, title, description, action, className = '' }: SectionHeaderProps) {
+  return (
+    <div className={`flex items-start justify-between gap-4 ${className}`}>
+      <div>
+        {eyebrow ? <div className="text-[11px] font-extrabold uppercase tracking-widest text-brand-500 mb-1">{eyebrow}</div> : null}
+        <h2 className="text-xl font-black tracking-tight text-slate-800">{title}</h2>
+        {description ? <p className="text-sm text-slate-500 mt-1 max-w-prose">{description}</p> : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
   );
 }

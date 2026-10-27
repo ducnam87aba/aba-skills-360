@@ -4,16 +4,27 @@ namespace ABA\Core\REST;
 
 use ABA\Core\Repositories\LessonProgressRepository;
 use ABA\Core\Repositories\XpTransactionRepository;
+use ABA\Core\Repositories\StreakRepository;
+use ABA\Core\Services\LearningPathService;
+use ABA\Core\Services\LessonService;
+use ABA\Core\Auth\Authorization;
+use function ABA\Core\Auth\aba_error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 class LearningController {
     private LessonProgressRepository $progressRepo;
     private XpTransactionRepository $xpRepo;
+    private StreakRepository $streakRepo;
+    private LearningPathService $pathService;
+    private LessonService $lessonService;
 
     public function __construct() {
         $this->progressRepo = new LessonProgressRepository();
         $this->xpRepo = new XpTransactionRepository();
+        $this->streakRepo = new StreakRepository();
+        $this->pathService = new LearningPathService();
+        $this->lessonService = new LessonService();
     }
 
     public function registerRoutes(): void {
@@ -23,84 +34,93 @@ class LearningController {
         register_rest_route($namespace, '/learning/path', [
             'methods' => 'GET',
             'callback' => [$this, 'getLearningPath'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => 'is_user_logged_in',
+        ]);
+
+        // GET /aba/v1/learning/lessons — browsable Content Library catalog (PA17)
+        register_rest_route($namespace, '/learning/lessons', [
+            'methods' => 'GET',
+            'callback' => [$this, 'getLessons'],
+            'permission_callback' => 'is_user_logged_in',
+        ]);
+
+        // GET /aba/v1/lessons/(?P<id>\d+) — a single lesson's real body (PA17).
+        // Numeric id is a distinct route from the string-node /complete below.
+        register_rest_route($namespace, '/lessons/(?P<id>\d+)', [
+            'methods' => 'GET',
+            'callback' => [$this, 'getLesson'],
+            'permission_callback' => 'is_user_logged_in',
         ]);
 
         // POST /aba/v1/lessons/(?P<id>[a-zA-Z0-9_\-]+)/complete
         register_rest_route($namespace, '/lessons/(?P<id>[a-zA-Z0-9_\-]+)/complete', [
             'methods' => 'POST',
             'callback' => [$this, 'completeLessonNode'],
-            'permission_callback' => '__return_true',
+            'permission_callback' => [Authorization::class, 'requireStudent'],
         ]);
     }
 
-    public function getLearningPath(WP_REST_Request $request): WP_REST_Response {
-        $studentId = (int)($request->get_param('studentId') ?? 1);
-        $completedNodes = $this->progressRepo->getCompletedNodeIds($studentId);
+    public function getLearningPath(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        // Own student by default; allow an explicit studentId only when permitted.
+        $studentId = Authorization::currentStudentId();
+        $requested = $request->get_param('studentId');
+        if ($requested !== null && (int)$requested !== $studentId) {
+            $studentId = (int)$requested;
+        }
+        $auth = Authorization::requireViewStudent($studentId);
+        if (is_wp_error($auth)) {
+            return $auth;
+        }
 
-        $path = [
-            'studentId' => $studentId,
-            'currentUnitId' => 'unit-1',
-            'currentNodeId' => 'node-2',
-            'units' => [
-                [
-                    'id' => 'unit-1',
-                    'title' => 'Chương 1: Nền tảng Giao tiếp Chủ động',
-                    'description' => 'Làm quen với việc lắng nghe tích cực và phản hồi hòa nhã',
-                    'competencyTarget' => 'CO',
-                    'order' => 1,
-                    'status' => 'active',
-                    'nodes' => [
-                        [
-                            'id' => 'node-1',
-                            'title' => 'Nhận biết tín hiệu cảm xúc bạn bè',
-                            'description' => 'Học cách quan sát nét mặt và cử chỉ',
-                            'type' => 'lesson',
-                            'status' => 'completed',
-                            'score' => 100,
-                            'xpReward' => 30,
-                            'order' => 1,
-                        ],
-                        [
-                            'id' => 'node-2',
-                            'title' => 'Thực hành Lắng nghe không phán xét',
-                            'description' => 'Bài tập nhập vai tình huống làm việc nhóm',
-                            'type' => 'lesson',
-                            'status' => in_array('node-2', $completedNodes) ? 'completed' : 'unlocked',
-                            'xpReward' => 40,
-                            'order' => 2,
-                        ],
-                        [
-                            'id' => 'node-3',
-                            'title' => 'Thử thách: Hóa giải hiểu lầm nhỏ',
-                            'description' => 'Trắc nghiệm lựa chọn cách diễn đạt phù hợp',
-                            'type' => 'quiz',
-                            'status' => in_array('node-2', $completedNodes) ? 'unlocked' : 'locked',
-                            'xpReward' => 60,
-                            'order' => 3,
-                        ],
-                        [
-                            'id' => 'node-4',
-                            'title' => 'Boss Challenge: Buổi thuyết trình tự tin',
-                            'description' => 'Vượt qua thử thách chương để mở khóa',
-                            'type' => 'boss_challenge',
-                            'status' => 'locked',
-                            'xpReward' => 100,
-                            'order' => 4,
-                        ],
-                    ],
-                ],
-            ],
-        ];
+        // Path is derived from measurement: RecommendationService orders the units
+        // by the learner's biggest growth gaps, progress gates node unlocking (PA7).
+        $source = $this->resolveSource($request);
 
-        return rest_ensure_response($path);
+        return rest_ensure_response($this->pathService->build($studentId, $source));
     }
 
-    public function completeLessonNode(WP_REST_Request $request): WP_REST_Response {
+    /** Ordering basis defaults to the learner's self-report (§54). */
+    private function resolveSource(WP_REST_Request $request): string {
+        $allowed = ['student', 'teacher', 'parent'];
+        $source = (string) ($request->get_param('source') ?? 'student');
+        return in_array($source, $allowed, true) ? $source : 'student';
+    }
+
+    /**
+     * GET /learning/lessons — editorial catalog, optionally scoped to one
+     * competency. Content is non-sensitive editorial material, so login is the
+     * gate (§8); no per-student authorization applies to reading a lesson.
+     */
+    public function getLessons(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        $competency = $request->get_param('competency');
+        $competency = is_string($competency) && $competency !== '' ? strtoupper($competency) : null;
+        $lessons = $this->lessonService->catalog($competency);
+        return rest_ensure_response([
+            'count' => count($lessons),
+            'lessons' => $lessons,
+        ]);
+    }
+
+    /** GET /lessons/{id} — the real body behind a learning-path node's contentId. */
+    public function getLesson(WP_REST_Request $request): WP_REST_Response|\WP_Error {
+        $lesson = $this->lessonService->get((int) $request->get_param('id'));
+        if ($lesson === null) {
+            return aba_error('LESSON_NOT_FOUND', 'Lesson not found.', 404);
+        }
+        return rest_ensure_response($lesson);
+    }
+
+    public function completeLessonNode(WP_REST_Request $request): WP_REST_Response|\WP_Error {
         $nodeId = (string)$request->get_param('id');
         $params = $request->get_json_params() ?: [];
-        $studentId = (int)($params['studentId'] ?? 1);
         $xpReward = (int)($params['xpReward'] ?? 40);
+
+        // Write progress only for the authenticated student's own record.
+        $studentId = Authorization::currentStudentId();
+        $scope = Authorization::requireStudentScope($studentId);
+        if (is_wp_error($scope)) {
+            return $scope;
+        }
 
         // Record progress in custom table
         $this->progressRepo->recordProgress($studentId, $nodeId, 'completed', 100.0, $xpReward);
@@ -113,6 +133,11 @@ class LearningController {
             $nodeId,
             "Hoàn thành bài học {$nodeId}"
         );
+
+        // Mark today active so the streak is derived from the activity calendar
+        // (§12). Idempotent per (student, date); a second lesson the same day does
+        // not extend the run.
+        $this->streakRepo->recordActivity($studentId);
 
         return rest_ensure_response([
             'success' => true,

@@ -7,16 +7,27 @@ export function MSWProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function initMocks() {
-      // Enable mocks if NEXT_PUBLIC_ENABLE_MOCKS is 'true' or in development mode
+      // Mocks are the default in development, but can be force-disabled
+      // (NEXT_PUBLIC_ENABLE_MOCKS='false') so the app talks to the real WordPress
+      // backend through the Next /wp-json proxy (cookie auth).
+      const mocksDisabled = process.env.NEXT_PUBLIC_ENABLE_MOCKS === 'false';
       const isMockEnabled =
-        process.env.NEXT_PUBLIC_ENABLE_MOCKS === 'true' ||
-        process.env.NODE_ENV === 'development';
+        !mocksDisabled &&
+        (process.env.NEXT_PUBLIC_ENABLE_MOCKS === 'true' ||
+          process.env.NODE_ENV === 'development');
 
       if (isMockEnabled && typeof window !== 'undefined') {
         const { worker } = await import('./browser');
         await worker.start({
           onUnhandledRequest: 'bypass',
         });
+      } else if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+        // PA38 — a worker registered while mocks were on keeps intercepting
+        // after the toggle flips (the service worker outlives the tab). In real
+        // mode it silently serves stale mock shapes, so unregister it.
+        navigator.serviceWorker.getRegistrations()
+          .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+          .catch(() => undefined);
       }
       setMswReady(true);
     }

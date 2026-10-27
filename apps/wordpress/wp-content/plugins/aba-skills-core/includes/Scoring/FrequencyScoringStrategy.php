@@ -3,12 +3,12 @@
 namespace ABA\Core\Scoring;
 
 /**
- * Frequency Scoring Strategy (Likert 1..4)
+ * Frequency Scoring Strategy (Likert 1..5)
  * Implements Sections 14, 28, 29, 31 of docs/assessment-spec.md
  */
 class FrequencyScoringStrategy implements ScoringStrategyInterface {
     const SCALE_MIN = 1;
-    const SCALE_MAX = 4;
+    const SCALE_MAX = 5;
 
     public function scoreItems(array $questions, array $responses): array {
         $scoredItems = [];
@@ -16,6 +16,12 @@ class FrequencyScoringStrategy implements ScoringStrategyInterface {
         foreach ($questions as $q) {
             $qId = (int)$q['id'];
             if (!isset($responses[$qId])) {
+                continue;
+            }
+
+            // Missing responses (explicit reason) are excluded from scoring,
+            // never coerced to a numeric value (spec §15-16, §46).
+            if (!empty($responses[$qId]['missing_reason'])) {
                 continue;
             }
 

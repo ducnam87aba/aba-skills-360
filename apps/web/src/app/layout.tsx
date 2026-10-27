@@ -1,12 +1,18 @@
 import React from 'react';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Nunito } from 'next/font/google';
 import '../styles/globals.css';
 import { QueryProvider } from '../providers/QueryProvider';
 import { MSWProvider } from '../mocks/MSWProvider';
 import { Navigation } from '../components/Navigation';
+import { AuthGate } from '../features/auth/AuthGate';
 
-const inter = Inter({ subsets: ['latin', 'vietnamese'] });
+const nunito = Nunito({
+  subsets: ['latin', 'vietnamese'],
+  weight: ['400', '600', '700', '800', '900'],
+  variable: '--font-nunito',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'ABA Skills 360 - Nền tảng Đánh giá & Phát triển Năng lực',
@@ -19,12 +25,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="vi">
-      <body className={`${inter.className} min-h-screen pb-24 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased selection:bg-emerald-500 selection:text-white`}>
+    <html lang="vi" className={nunito.variable}>
+      <body className="font-sans min-h-screen text-slate-800 antialiased selection:bg-brand-200 selection:text-brand-900">
         <MSWProvider>
           <QueryProvider>
-            <Navigation />
-            <main className="max-w-4xl mx-auto px-4 py-6">{children}</main>
+            <AuthGate>
+              <Navigation />
+              <div className="lg:pl-72 pt-16 pb-20 lg:pb-10">
+                <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
+                  {children}
+                </main>
+              </div>
+            </AuthGate>
           </QueryProvider>
         </MSWProvider>
       </body>

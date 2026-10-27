@@ -10,27 +10,110 @@ class StudentRepository {
         $this->table = $wpdb->prefix . 'aba_students';
     }
 
+    /**
+     * Shared projection base (PA27). A student row stores only bare school_id /
+     * class_id; the human names live in wp_aba_schools / wp_aba_classes (§6).
+     * LEFT JOINing them here populates school_name / class_name that toApiShape
+     * already reads — in ONE query, so no caller pays an N+1 lookup. LEFT (not
+     * INNER) keeps the student visible even if its school/class row is missing.
+     */
+    private function baseSelect(): string {
+        global $wpdb;
+        $p = $wpdb->prefix;
+        return "SELECT s.*, sch.name AS school_name, cls.name AS class_name
+                FROM {$p}aba_students s
+                LEFT JOIN {$p}aba_schools sch ON sch.id = s.school_id
+                LEFT JOIN {$p}aba_classes cls ON cls.id = s.class_id ";
+    }
+
     public function findById(int $id): ?array {
         global $wpdb;
-        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id), ARRAY_A);
+        $row = $wpdb->get_row($wpdb->prepare($this->baseSelect() . "WHERE s.id = %d", $id), ARRAY_A);
         return $row ?: null;
     }
 
     public function findByUserId(int $userId): ?array {
         global $wpdb;
-        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$this->table} WHERE user_id = %d", $userId), ARRAY_A);
+        $row = $wpdb->get_row($wpdb->prepare($this->baseSelect() . "WHERE s.user_id = %d", $userId), ARRAY_A);
         return $row ?: null;
     }
 
     public function getChildrenForParent(int $parentUserId): array {
         global $wpdb;
-        $parentStudentTable = $wpdb->prefix . 'aba_parent_student';
+        $p = $wpdb->prefix;
 
-        $sql = "SELECT s.* 
-                FROM {$this->table} s
-                INNER JOIN {$parentStudentTable} ps ON s.id = ps.student_id
-                WHERE ps.parent_user_id = %d AND ps.status = 'active'";
+        $sql = $this->baseSelect()
+            . "INNER JOIN {$p}aba_parent_student ps ON s.id = ps.student_id
+               WHERE ps.parent_user_id = %d AND ps.status = 'active'";
 
-        return $wpdb->get_results($wpdb->prepare($sql, $parentUserId), ARRAY_A) ?: [];
+        $rows = $wpdb->get_results($wpdb->prepare($sql, $parentUserId), ARRAY_A) ?: [];
+        return array_map([$this, 'toApiShape'], $rows);
+    }
+
+    /**
+     * The active roster of one school (PA23). Scoped by school_id — the caller's
+     * own assignment — never an arbitrary id from the client (§8). Returns []
+     * for an unassigned caller (school_id 0), which is the safe default.
+     */
+    public function listBySchool(int $schoolId): array {
+        if ($schoolId <= 0) {
+            return [];
+        }
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            $this->baseSelect() . "WHERE s.school_id = %d AND s.status = 'active' ORDER BY s.id ASC",
+            $schoolId
+        ), ARRAY_A) ?: [];
+        return array_map([$this, 'toApiShape'], $rows);
+    }
+
+    /**
+     * The active roster of one class (PA24). Scoped by class_id — the caller's own
+     * assignment — never an arbitrary id from the client (§8). Returns [] for an
+     * unassigned caller (class_id 0), which is the safe default.
+     */
+    public function listByClass(int $classId): array {
+        if ($classId <= 0) {
+            return [];
+        }
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            $this->baseSelect() . "WHERE s.class_id = %d AND s.status = 'active' ORDER BY s.id ASC",
+            $classId
+        ), ARRAY_A) ?: [];
+        return array_map([$this, 'toApiShape'], $rows);
+    }
+
+    /**
+     * Map a raw wp_aba_students row into the StudentProfile API contract shape.
+     * Null-safe so a freshly seeded row never fatals the endpoint.
+     */
+    public function toApiShape(array $row): array {
+        $fullName = trim(($row['last_name'] ?? '') . ' ' . ($row['first_name'] ?? ''));
+        if ($fullName === '') {
+            $fullName = $row['student_code'] ?? '';
+        }
+        $totalXp = (int)($row['total_xp'] ?? 0);
+
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'userId' => (int)($row['user_id'] ?? 0),
+            'studentCode' => $row['student_code'] ?? '',
+            'firstName' => $row['first_name'] ?? '',
+            'lastName' => $row['last_name'] ?? '',
+            'fullName' => $fullName,
+            'gradeLevel' => (int)($row['grade_level'] ?? 0),
+            'gradeGroup' => $row['grade_group'] ?? '4_6',
+            'schoolId' => (int)($row['school_id'] ?? 0),
+            'schoolName' => $row['school_name'] ?? null,
+            'classId' => isset($row['class_id']) ? (int)$row['class_id'] : null,
+            'className' => $row['class_name'] ?? null,
+            'avatarUrl' => $row['avatar_url'] ?? null,
+            'totalXp' => $totalXp,
+            'currentStreak' => (int)($row['current_streak'] ?? 0),
+            'longestStreak' => (int)($row['longest_streak'] ?? 0),
+            'level' => (int)($row['level'] ?? max(1, intdiv($totalXp, 200) + 1)),
+            'lastActiveAt' => $row['last_active_at'] ?? gmdate('Y-m-d\TH:i:s\Z'),
+        ];
     }
 }

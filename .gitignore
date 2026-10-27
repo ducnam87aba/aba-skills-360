@@ -43,3 +43,7 @@ apps/wordpress/wp-content/uploads/
 apps/wordpress/wp-content/upgrade/
 apps/wordpress/wp-content/cache/
 apps/wordpress/wp-config.php
+
+# Browser-verification screenshots dropped at the repo root by test sessions
+# (no *.png is tracked anywhere in this repo, so a root-only glob is safe).
+/*.png

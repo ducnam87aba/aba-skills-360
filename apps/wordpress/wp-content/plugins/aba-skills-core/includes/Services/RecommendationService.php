@@ -2,82 +2,144 @@
 
 namespace ABA\Core\Services;
 
+/**
+ * Deterministic Recommendation Engine (AGENTS.md §13, assessment-spec.md §13).
+ *
+ * Version 1 is pure rules — no LLM, no randomness — so the same inputs always
+ * produce the same ordered output and the suite can assert exact behaviour.
+ *
+ * Rules:
+ *  - Every MEASURED competency scoring below the growth threshold contributes
+ *    grade-group-flavoured content, largest gap first (stable: score asc, then
+ *    skill code).
+ *  - Insufficient evidence is unmeasured, never a low score (§45, invariant #1):
+ *    it produces NO content recommendation rather than a spurious "fix this".
+ *  - Output is capped so the learner/parent sees a focused next-best set.
+ *
+ * The public getRecommendations() shape is unchanged (list of items) so
+ * ParentController keeps working; new keys are additive and optional for the
+ * typed client.
+ */
 class RecommendationService {
+    /** At or above this score a competency is not a growth priority. Public so the
+     *  Learning Path can phrase the same threshold without duplicating the number. */
+    public const THRESHOLD = 60.0;
+
+    /** Cap the rail so the recommendation set stays focused. */
+    private const MAX_RECOMMENDATIONS = 6;
+
+    private const STRATEGY_VERSION = 'ABA-REC-0.2';
+
+    /** Grade-group bands -> delivery style. Unknown bands fall back to 4_6. */
+    private const BAND_STYLE = [
+        '4_6'   => 'Trải nghiệm qua trò chơi và tình huống',
+        '7_9'   => 'Luyện tập qua thảo luận và dự án nhóm',
+        '10_12' => 'Phát triển qua dự án thực tế',
+    ];
+
+    /** The six core competencies (assessment-spec.md §26). */
+    private const FOCUS = [
+        'SA' => 'nhận diện điểm mạnh và điểm cần hoàn thiện của bản thân',
+        'ER' => 'điều hòa cảm xúc khi gặp áp lực',
+        'SM' => 'tự giác lập kế hoạch và hoàn thành nhiệm vụ',
+        'CO' => 'trình bày ý kiến rõ ràng và lắng nghe chủ động',
+        'CE' => 'hợp tác và thấu cảm với người khác',
+        'PD' => 'phân tích vấn đề và ra quyết định có cân nhắc',
+    ];
+
     /**
-     * Deterministic recommendation engine based on competency scores and grade group
+     * @param array $competencyScores list of skills shaped by SkillsProfileService
+     *        (skillCode / score / status).
+     * @return list<array{id,title,description,type,targetCompetency,priority,targetScore,reason,gradeGroup}>
      */
     public function getRecommendations(array $competencyScores, string $gradeGroup = '4_6'): array {
-        $recommendations = [];
+        $band = $this->normalizeBand($gradeGroup);
+        $style = self::BAND_STYLE[$band];
 
-        // Identify lowest competency
-        $lowestCode = null;
-        $lowestScore = 101.0;
-
+        // Collect measured competencies below the threshold; skip unmeasured.
+        $gaps = [];
         foreach ($competencyScores as $item) {
-            $score = (float)($item['score'] ?? 0);
-            if ($score < $lowestScore) {
-                $lowestScore = $score;
-                $lowestCode = $item['skillCode'];
+            $score = $item['score'] ?? null;
+            $status = $item['status'] ?? 'valid';
+            if ($status === 'insufficient_evidence' || $score === null) {
+                continue;
             }
+            $value = (float) $score;
+            if ($value >= self::THRESHOLD) {
+                continue;
+            }
+            $code = (string) ($item['skillCode'] ?? '');
+            if (!isset(self::FOCUS[$code])) {
+                continue;
+            }
+            $gaps[] = ['code' => $code, 'score' => $value];
         }
 
-        // Rule-based recommendations
-        switch ($lowestCode) {
-            case 'CO': // Giao tiếp
-                $recommendations[] = [
-                    'id' => 'rec-co-1',
-                    'title' => 'Chương 1: Nền tảng Giao tiếp Chủ động',
-                    'description' => 'Bài học thực hành lắng nghe không ngắt lời và phản hồi tích cực.',
-                    'type' => 'lesson',
-                    'targetCompetency' => 'CO',
-                ];
-                $recommendations[] = [
-                    'id' => 'rec-co-2',
-                    'title' => 'Thực hành bữa ăn gia đình',
-                    'description' => 'Khuyến nghị phụ huynh: Dành 15 phút trò chuyện cởi mở cùng con mỗi tối.',
-                    'type' => 'home_exercise',
-                    'targetCompetency' => 'CO',
-                ];
-                break;
+        // Deterministic ordering: biggest gap first, tie-break on skill code.
+        usort($gaps, static function ($a, $b) {
+            return ($a['score'] <=> $b['score']) ?: strcmp($a['code'], $b['code']);
+        });
 
-            case 'ER': // Quản lý cảm xúc
-                $recommendations[] = [
-                    'id' => 'rec-er-1',
-                    'title' => 'Bài tập Thở sâu 3 phút khi căng thẳng',
-                    'description' => 'Phương pháp điều hòa nhịp tim và giữ bình tĩnh trước giờ làm bài.',
-                    'type' => 'home_exercise',
-                    'targetCompetency' => 'ER',
-                ];
-                $recommendations[] = [
-                    'id' => 'rec-er-2',
-                    'title' => 'Khóa học: Làm quen với Cơn giận và Lo lắng',
-                    'description' => 'Nhận biết tín hiệu sinh học khi cơ thể bắt đầu cáu kỉnh.',
-                    'type' => 'lesson',
-                    'targetCompetency' => 'ER',
-                ];
+        $recommendations = [];
+        foreach ($gaps as $rank => $gap) {
+            if (count($recommendations) >= self::MAX_RECOMMENDATIONS) {
                 break;
+            }
+            $code = $gap['code'];
+            $focus = self::FOCUS[$code];
+            $reason = 'Năng lực ở mức cần cải thiện (' . $this->fmt($gap['score']) . ' < ' . $this->fmt(self::THRESHOLD) . ')';
 
-            case 'PD': // Giải quyết vấn đề
-                $recommendations[] = [
-                    'id' => 'rec-pd-1',
-                    'title' => 'Chương 2: Tư duy Phân tích Nút thắt Vấn đề',
-                    'description' => 'Kỹ thuật chia nhỏ vấn đề lớn thành các phần dễ xử lý.',
-                    'type' => 'lesson',
-                    'targetCompetency' => 'PD',
-                ];
-                break;
+            $recommendations[] = [
+                'id' => 'rec-' . $code . '-lesson',
+                'title' => $style . ': ' . $focus,
+                'description' => 'Bài học cho nhóm lớp ' . $band . ', giúp học sinh rèn luyện ' . $focus . '.',
+                'type' => 'lesson',
+                'targetCompetency' => $code,
+                'priority' => count($recommendations) + 1,
+                'targetScore' => $gap['score'],
+                'reason' => $reason,
+                'gradeGroup' => $band,
+            ];
 
-            default:
-                $recommendations[] = [
-                    'id' => 'rec-gen-1',
-                    'title' => 'Rèn luyện Thói quen Học tập Bền bỉ',
-                    'description' => 'Duy trì chuỗi học tập 7 ngày liên tiếp để nâng cao tính tự lập.',
-                    'type' => 'activity',
-                    'targetCompetency' => $lowestCode ?: 'SM',
-                ];
+            if (count($recommendations) >= self::MAX_RECOMMENDATIONS) {
                 break;
+            }
+            $recommendations[] = [
+                'id' => 'rec-' . $code . '-home',
+                'title' => 'Bài tập cùng gia đình: ' . $focus,
+                'description' => 'Gợi ý phụ huynh đồng hành 10-15 phút mỗi ngày để con luyện ' . $focus . ' (nhóm lớp ' . $band . ').',
+                'type' => 'home_exercise',
+                'targetCompetency' => $code,
+                'priority' => count($recommendations) + 1,
+                'targetScore' => $gap['score'],
+                'reason' => 'Củng cố tại nhà cho ưu tiên #' . ($rank + 1),
+                'gradeGroup' => $band,
+            ];
         }
 
         return $recommendations;
+    }
+
+    /**
+     * Full envelope for the REST endpoint, so the client can show provenance
+     * (strategy version + threshold + resolved grade group).
+     */
+    public function build(array $competencyScores, string $gradeGroup = '4_6'): array {
+        $band = $this->normalizeBand($gradeGroup);
+        return [
+            'strategyVersion' => self::STRATEGY_VERSION,
+            'threshold' => self::THRESHOLD,
+            'gradeGroup' => $band,
+            'items' => $this->getRecommendations($competencyScores, $gradeGroup),
+        ];
+    }
+
+    private function normalizeBand(string $gradeGroup): string {
+        $g = strtolower(trim($gradeGroup));
+        return isset(self::BAND_STYLE[$g]) ? $g : '4_6';
+    }
+
+    private function fmt(float $v): string {
+        return rtrim(rtrim(number_format($v, 1, '.', ''), '0'), '.');
     }
 }

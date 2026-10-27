@@ -1,104 +1,157 @@
 'use client';
 
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@aba/api-client';
-import { Card, Badge, Button } from '@aba/ui';
+import { Card, Badge, Button, SectionHeader } from '@aba/ui';
 import {
-  FileText,
   Download,
+  Printer,
   CheckCircle2,
   AlertCircle,
-  Compass,
+  Lightbulb,
   TrendingUp,
   ArrowUpRight,
   ArrowDownRight,
   Sparkles,
+  Home,
+  BookOpen,
 } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+} from 'recharts';
+import type { CompetencyCode } from '@aba/types';
+import { reportToCsv, reportCsvFilename, downloadCsv, printReport, skillsHistoryToCsv, skillsHistoryCsvFilename } from '../../../lib/reportExport';
+
+const COMP_COLORS: Record<CompetencyCode, string> = {
+  SA: '#7c5cff', ER: '#ff5d73', SM: '#ffae00', CO: '#1cb0f6', CE: '#0aa96f', PD: '#4b6bff',
+};
+
+const COMP_NAMES: Record<string, string> = {
+  SA: 'Tự nhận thức', ER: 'Quản lý cảm xúc', SM: 'Tự quản lý',
+  CO: 'Giao tiếp', CE: 'Hợp tác & Đồng cảm', PD: 'Giải quyết vấn đề',
+};
+
+const COMP_TREND: CompetencyCode[] = ['SA', 'ER', 'SM', 'CO', 'CE', 'PD'];
 
 export default function ParentReportsPage() {
+  // Resolve the child from the parent link instead of hardcoding an id, so the
+  // same page is correct against the real (permission-checked) backend.
+  const { data: children, isLoading: isChildrenLoading } = useQuery({
+    queryKey: ['parent-children'],
+    queryFn: () => api.parent.getChildren(),
+  });
+  const childId = children?.[0]?.id;
+
   const { data: reports, isLoading: isReportsLoading } = useQuery({
-    queryKey: ['student-reports', 1],
-    queryFn: () => api.parent.getReports(1),
+    queryKey: ['student-reports', childId],
+    queryFn: () => (childId ? api.parent.getReports(childId) : Promise.resolve([])),
+    enabled: !!childId,
   });
 
   const { data: history, isLoading: isHistoryLoading } = useQuery({
-    queryKey: ['skills-history', 1],
-    queryFn: () => api.skills.getHistory(1),
+    queryKey: ['skills-history', childId],
+    queryFn: () => (childId ? api.skills.getHistory(childId) : Promise.resolve([])),
+    enabled: !!childId,
   });
 
-  if (isReportsLoading || isHistoryLoading) {
-    return (
-      <div className="p-8 text-center text-slate-400">
-        Đang tải báo cáo năng lực và phân tích so sánh...
-      </div>
-    );
+  // PA20: persist a fresh immutable snapshot, then refresh the stored history.
+  const queryClient = useQueryClient();
+  const generate = useMutation({
+    mutationFn: () => (childId ? api.parent.generateReport(childId) : Promise.reject(new Error('Chưa chọn học sinh'))),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['student-reports', childId] }),
+  });
+
+  if (isChildrenLoading || (childId && (isReportsLoading || isHistoryLoading))) {
+    return <div className="p-8 text-center text-slate-400 font-bold">Đang tải báo cáo năng lực...</div>;
   }
 
-  // Calculate delta between latest two snapshots if available
   const latestSnap = history && history.length > 0 ? history[history.length - 1] : null;
   const prevSnap = history && history.length > 1 ? history[history.length - 2] : null;
-
-  const competencyLabels: Record<string, string> = {
-    SA: 'Tự nhận thức',
-    ER: 'Quản lý cảm xúc',
-    SM: 'Tự quản lý',
-    CO: 'Giao tiếp',
-    CE: 'Hợp tác & Đồng cảm',
-    PD: 'Giải quyết vấn đề',
-  };
+  // Longitudinal trend series (§11): one point per immutable Skill Snapshot.
+  const chartData = (history ?? []).map((item) => ({ date: item.date, ...item.scores }));
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100">
-          Báo Cáo Năng Lực & Khuyến Nghị Phát Triển
-        </h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Báo cáo định kỳ phân tích chi tiết 6 nhóm năng lực và khuyến nghị phương pháp đồng hành tại gia đình.
-        </p>
-      </div>
+      <SectionHeader
+        eyebrow="Định kỳ · Khuyến nghị"
+        title="Báo cáo năng lực & lộ trình đồng hành"
+        description="Phân tích chi tiết 6 nhóm năng lực và phương pháp hỗ trợ con tại gia đình."
+      />
 
-      {/* Month-over-month Longitudinal Delta Comparison */}
+      {childId && (history && history.length > 0) && (
+        <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            className="gap-1.5"
+            onClick={() => generate.mutate()}
+            disabled={generate.isPending}
+          >
+            <Sparkles className="w-4 h-4" /> {generate.isPending ? 'Đang tạo...' : 'Tạo báo cáo mới'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => downloadCsv(skillsHistoryCsvFilename(childId), skillsHistoryToCsv(history))}
+          >
+            <Download className="w-4 h-4" /> Tải xu hướng (CSV)
+          </Button>
+        </div>
+      )}
+      {childId && !(history && history.length > 0) && (
+        <div className="flex justify-end">
+          <Button size="sm" className="gap-1.5" onClick={() => generate.mutate()} disabled={generate.isPending}>
+            <Sparkles className="w-4 h-4" /> {generate.isPending ? 'Đang tạo...' : 'Tạo báo cáo mới'}
+          </Button>
+        </div>
+      )}
+
+      {/* Growth delta */}
       {latestSnap && prevSnap && (
-        <Card className="p-6 space-y-4 bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-700/60 pb-3">
+        <Card className="overflow-hidden">
+          <div className="bg-gradient-to-br from-brand-500 to-brand-700 text-white px-6 py-5 flex items-center justify-between gap-3">
             <div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-1">
-                <Sparkles className="w-3.5 h-3.5" /> Phân tích tăng trưởng định kỳ
+              <div className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-brand-100 mb-1">
+                <Sparkles className="w-3.5 h-3.5" /> Chuyển biến tăng trưởng
               </div>
-              <h2 className="text-base font-bold text-white">
-                Chuyển Biến So Với Kỳ Đánh Giá Trước ({prevSnap.date} → {latestSnap.date})
+              <h2 className="text-lg font-black leading-tight">
+                So với kỳ đánh giá trước
               </h2>
             </div>
-            <Badge variant="purple">Longitudinal Delta</Badge>
+            <div className="text-right shrink-0">
+              <div className="text-[11px] text-brand-100 font-bold uppercase">{prevSnap.date}</div>
+              <div className="text-brand-100 font-black">→</div>
+              <div className="text-[11px] text-white font-black">{latestSnap.date}</div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 pt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 p-5">
             {Object.keys(latestSnap.scores).map((key) => {
-              const currentVal = latestSnap.scores[key as keyof typeof latestSnap.scores] || 0;
-              const prevVal = prevSnap.scores[key as keyof typeof prevSnap.scores] || 0;
+              const currentVal = latestSnap.scores[key as CompetencyCode] || 0;
+              const prevVal = prevSnap.scores[key as CompetencyCode] || 0;
               const delta = Math.round((currentVal - prevVal) * 10) / 10;
               const isPositive = delta >= 0;
+              const color = COMP_COLORS[key as CompetencyCode] ?? '#0aa96f';
 
               return (
-                <div key={key} className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/60 text-center">
-                  <div className="text-[11px] font-medium text-slate-400">
-                    {competencyLabels[key] || key}
+                <div key={key} className="p-3 rounded-2xl bg-slate-50 border border-black/5 text-center">
+                  <div className="w-8 h-8 mx-auto rounded-full flex items-center justify-center text-white font-black text-xs mb-1.5" style={{ backgroundColor: color }}>
+                    {key}
                   </div>
-                  <div className="text-lg font-black text-white mt-0.5">
-                    {currentVal}
-                  </div>
+                  <div className="text-[11px] font-bold text-slate-400 leading-tight min-h-[2rem]">{COMP_NAMES[key] || key}</div>
+                  <div className="text-xl font-black text-slate-800 mt-1 tabular-nums">{currentVal}</div>
                   <div
-                    className={`inline-flex items-center text-xs font-bold mt-1 ${
-                      isPositive ? 'text-emerald-400' : 'text-rose-400'
-                    }`}
+                    className={`inline-flex items-center text-xs font-black mt-0.5 ${isPositive ? 'text-brand-600' : 'text-er'}`}
                   >
-                    {isPositive ? (
-                      <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                    ) : (
-                      <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
-                    )}
+                    {isPositive ? <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" /> : <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />}
                     {isPositive ? `+${delta}` : delta}
                   </div>
                 </div>
@@ -108,83 +161,142 @@ export default function ParentReportsPage() {
         </Card>
       )}
 
-      {/* Reports List */}
-      <div className="space-y-4">
+      {/* Longitudinal trend (Skill Snapshots over time, §11) */}
+      {childId && (
+        <Card className="p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-brand-500" />
+            <h2 className="text-sm font-black text-slate-700">Tiến trình năng lực của con theo thời gian</h2>
+          </div>
+
+          {chartData.length >= 2 ? (
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f0" />
+                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} fontWeight={700} />
+                  <YAxis domain={[0, 100]} stroke="#94a3b8" fontSize={11} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#ffffff',
+                      borderRadius: '14px',
+                      border: '1px solid rgba(0,0,0,0.06)',
+                      boxShadow: '0 8px 24px -12px rgba(0,0,0,0.25)',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: '#334155',
+                    }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '11px', fontWeight: 700, paddingTop: '12px' }} />
+                  {COMP_TREND.map((code) => (
+                    <Line
+                      key={code}
+                      type="monotone"
+                      dataKey={code}
+                      name={COMP_NAMES[code] || code}
+                      stroke={COMP_COLORS[code]}
+                      strokeWidth={2.6}
+                      dot={{ r: 3, fill: COMP_COLORS[code] }}
+                      activeDot={{ r: 5 }}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400 font-medium">
+              Cần ít nhất hai kỳ đánh giá để vẽ đường phát triển. Mỗi lần con hoàn thành bài đánh giá, hệ
+              thống lưu lại một <strong className="text-slate-600">Skill Snapshot</strong> bất biến để xây dựng biểu đồ xu hướng.
+            </p>
+          )}
+        </Card>
+      )}
+
+      {/* Reports list */}
+      <div className="space-y-5">
         {reports?.map((report) => (
           <Card key={report.id} className="p-6 space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-black/5">
               <div>
                 <Badge variant="purple">Báo cáo chuẩn hóa 360°</Badge>
-                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 mt-1">
-                  {report.title}
-                </h2>
+                <h2 className="text-lg font-black text-slate-800 mt-2 leading-tight">{report.title}</h2>
                 <span className="text-[11px] text-slate-400">
-                  Ngày phát hành: {new Date(report.generatedAt).toLocaleDateString('vi-VN')}
+                  Phát hành {new Date(report.generatedAt).toLocaleDateString('vi-VN')}
                 </span>
               </div>
-
               <div className="flex items-center gap-2">
-                <div className="text-right sm:mr-3">
-                  <div className="text-xs text-slate-400">Điểm tổng thể</div>
-                  <div className="text-2xl font-black text-emerald-600">{report.overallScore}/100</div>
+                <div className="text-right mr-1">
+                  <div className="text-[11px] text-slate-400 font-bold uppercase">Điểm tổng thể</div>
+                  <div className="text-2xl font-black text-brand-600 tabular-nums">{report.overallScore}/100</div>
                 </div>
-                <Button size="sm" variant="outline" className="gap-1.5 text-xs">
-                  <Download className="w-3.5 h-3.5" /> Tải PDF
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => downloadCsv(reportCsvFilename(report), reportToCsv(report))}
+                >
+                  <Download className="w-4 h-4" /> CSV
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => printReport()}>
+                  <Printer className="w-4 h-4" /> PDF
                 </Button>
               </div>
             </div>
 
             <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">
-                Tóm tắt đánh giá chuyên môn
-              </h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                {report.summary}
-              </p>
+              <h3 className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-1">Tóm tắt chuyên môn</h3>
+              <p className="text-sm text-slate-600 leading-relaxed">{report.summary}</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200/50">
-                <h4 className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5 mb-2">
-                  <CheckCircle2 className="w-4 h-4" /> Điểm mạnh nổi bật của con
+              <div className="p-4 rounded-2xl bg-brand-50 border border-brand-100">
+                <h4 className="text-xs font-black text-brand-700 flex items-center gap-1.5 mb-2 uppercase tracking-wide">
+                  <CheckCircle2 className="w-4 h-4" /> Điểm mạnh của con
                 </h4>
-                <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-1 list-disc list-inside">
+                <ul className="text-sm text-slate-700 space-y-1.5">
                   {report.strengths.map((str, i) => (
-                    <li key={i}>{str}</li>
+                    <li key={i} className="flex gap-2"><span className="text-brand-500 font-black">•</span><span>{str}</span></li>
                   ))}
                 </ul>
               </div>
-
-              <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200/50">
-                <h4 className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center gap-1.5 mb-2">
-                  <AlertCircle className="w-4 h-4" /> Khía cạnh cần rèn luyện thêm
+              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100">
+                <h4 className="text-xs font-black text-rose-700 flex items-center gap-1.5 mb-2 uppercase tracking-wide">
+                  <AlertCircle className="w-4 h-4" /> Cần rèn luyện thêm
                 </h4>
-                <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-1 list-disc list-inside">
+                <ul className="text-sm text-slate-700 space-y-1.5">
                   {report.areasForGrowth.map((area, i) => (
-                    <li key={i}>{area}</li>
+                    <li key={i} className="flex gap-2"><span className="text-rose-400 font-black">•</span><span>{area}</span></li>
                   ))}
                 </ul>
               </div>
             </div>
 
             {/* Recommendations */}
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
-              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 mb-2">
-                <Compass className="w-4 h-4 text-emerald-500" /> Khuyến nghị can thiệp & Bài tập tại nhà
+            <div className="p-5 rounded-2xl bg-slate-50 border border-black/5">
+              <h4 className="text-sm font-black text-slate-800 flex items-center gap-2 mb-3">
+                <Lightbulb className="w-5 h-5 text-sm" /> Khuyến nghị can thiệp & bài tập tại nhà
               </h4>
-              <div className="space-y-2">
-                {report.recommendations.map((rec) => (
-                  <div key={rec.id} className="text-xs flex items-start gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-                    <div>
-                      <strong className="text-slate-800 dark:text-slate-100">{rec.title}</strong>
-                      <span className="text-[10px] ml-2 px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 font-semibold text-slate-600 dark:text-slate-300">
-                        {rec.type === 'home_exercise' ? 'Gia đình' : 'Bài học'}
-                      </span>
-                      <p className="text-slate-500 dark:text-slate-400 mt-0.5">{rec.description}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {report.recommendations.map((rec) => {
+                  const color = COMP_COLORS[rec.targetCompetency] ?? '#0aa96f';
+                  const isHome = rec.type === 'home_exercise';
+                  return (
+                    <div key={rec.id} className="p-4 rounded-xl bg-white border border-black/5 shadow-card">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-slate-400">
+                          {isHome ? <Home className="w-3.5 h-3.5" /> : <BookOpen className="w-3.5 h-3.5" />}
+                          {isHome ? 'Gia đình' : 'Bài học'}
+                        </span>
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: color }}>
+                          {rec.targetCompetency}
+                        </span>
+                      </div>
+                      <strong className="text-slate-800 text-sm leading-tight block">{rec.title}</strong>
+                      <p className="text-xs text-slate-500 mt-1">{rec.description}</p>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </Card>

@@ -19,6 +19,8 @@ class AssessmentSessionRepository {
             'student_id' => $data['student_id'],
             'school_id' => $data['school_id'] ?? 1,
             'assessment_version' => $data['assessment_version'] ?? '1.0.0',
+            'respondent_type' => $data['respondent_type'] ?? 'student',
+            'grade_group' => $data['grade_group'] ?? '',
             'status' => 'in_progress',
             'scoring_strategy' => $data['scoring_strategy'] ?? 'standard',
             'current_step' => 0,
@@ -26,9 +28,20 @@ class AssessmentSessionRepository {
             'started_at' => $now,
             'created_at' => $now,
             'updated_at' => $now,
-        ], ['%d', '%d', '%d', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s']);
+        ], ['%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s']);
 
         return (int)$wpdb->insert_id;
+    }
+
+    /** Resume support: an active in_progress session for this student + assessment. */
+    public function findInProgress(int $assessmentId, int $studentId): ?array {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->table} WHERE assessment_id = %d AND student_id = %d AND status = 'in_progress' ORDER BY started_at DESC LIMIT 1",
+            $assessmentId,
+            $studentId
+        ), ARRAY_A);
+        return $row ?: null;
     }
 
     public function findById(int $id): ?array {

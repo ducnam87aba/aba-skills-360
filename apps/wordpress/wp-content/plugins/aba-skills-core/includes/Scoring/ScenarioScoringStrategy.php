@@ -16,17 +16,35 @@ class ScenarioScoringStrategy implements ScoringStrategyInterface {
                 continue;
             }
 
+            // Missing responses are excluded, never scored as zero (§46).
+            if (!empty($responses[$qId]['missing_reason'])) {
+                continue;
+            }
+
             $selectedOptionId = $responses[$qId]['response_value'];
-            $points = 0;
+            $points = null;
+            $rubricValues = [];
 
             if (!empty($q['options']) && is_array($q['options'])) {
                 foreach ($q['options'] as $opt) {
+                    $rubricValues[] = (float)($opt['score_value'] ?? 0);
                     if ($opt['id'] == $selectedOptionId) {
                         $points = (float)($opt['score_value'] ?? 0);
-                        break;
                     }
                 }
             }
+
+            // Unmatched option id => invalid response, excluded from scoring.
+            if ($points === null) {
+                continue;
+            }
+
+            // Normalize the rubric to 0-100 (§35): ((s-min)/(max-min))*100.
+            $min = $rubricValues ? min($rubricValues) : 0.0;
+            $max = $rubricValues ? max($rubricValues) : 0.0;
+            $normalized = ($max > $min)
+                ? (($points - $min) / ($max - $min)) * 100
+                : 0.0;
 
             $scoredItems[$qId] = [
                 'question_id' => $qId,
@@ -34,7 +52,7 @@ class ScenarioScoringStrategy implements ScoringStrategyInterface {
                 'indicator_code' => $q['indicator_code'] ?? '',
                 'raw_value' => $selectedOptionId,
                 'score_value' => $points,
-                'normalized_score' => round($points, 2),
+                'normalized_score' => round($normalized, 2),
                 'latency_ms' => $responses[$qId]['latency_ms'] ?? 0,
             ];
         }
