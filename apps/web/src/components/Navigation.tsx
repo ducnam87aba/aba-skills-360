@@ -56,15 +56,17 @@ export function Navigation() {
   const pathname = usePathname();
   // Auth screens are full-bleed; the app chrome (and its session-derived stats)
   // only belongs once the learner/parent is inside the product (PA9).
-  if (pathname?.startsWith('/login')) return null;
+  const isAuthScreen = pathname?.startsWith('/login') ?? false;
   const isParentMode = pathname?.startsWith('/parent');
-  const currentLinks = isParentMode ? parentLinks : studentLinks;
 
   const { data: student } = useQuery({
     queryKey: ['student-me'],
     queryFn: () => api.student.getMe(),
-    enabled: !isParentMode,
+    enabled: !isParentMode && !isAuthScreen,
   });
+
+  if (isAuthScreen) return null;
+  const currentLinks = isParentMode ? parentLinks : studentLinks;
 
   const stats = {
     streak: student?.currentStreak ?? 0,
