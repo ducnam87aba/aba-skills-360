@@ -25,6 +25,8 @@ import type {
   RecommendationItem,
   RecommendationsResult,
   GradeGroup,
+  CredentialAuditEvent,
+  DeviceSession,
 } from '@aba/types';
 
 export const mockStudentUser: User = {
@@ -72,6 +74,98 @@ export const mockStudentProfile: StudentProfile = {
   lastActiveAt: new Date().toISOString(),
 };
 
+// PA49: mock credential audit trail — mirrors CredentialAuditService::listFor()
+// (newest first, never carries a password/token, only non-secret context).
+// PA61: it now holds all four kinds, so the filter chips have something to
+// filter: an account action, a new device, a password sign-in, and the lockout
+// that follows a burst of wrong guesses.
+export const mockCredentialEvents: CredentialAuditEvent[] = [
+  {
+    id: 6,
+    action: 'login_throttled',
+    kind: 'lockout',
+    actionLabel: 'Tạm khoá do thử sai nhiều lần',
+    actorLabel: 'Hệ thống',
+    method: '',
+    mustChange: false,
+    createdAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    label: null,
+    door: null,
+    failures: 5,
+    retryAfter: 900,
+  },
+  {
+    id: 5,
+    action: 'credential_session_opened',
+    kind: 'session',
+    actionLabel: 'Đăng nhập bằng trình duyệt',
+    actorLabel: 'Chính bạn',
+    method: '',
+    mustChange: false,
+    createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    label: 'Máy tính',
+    door: 'cookie',
+    failures: null,
+    retryAfter: null,
+  },
+  {
+    id: 4,
+    action: 'credential_device_added',
+    kind: 'device',
+    actionLabel: 'Thiết bị mới đăng nhập',
+    actorLabel: 'Chính bạn',
+    method: '',
+    mustChange: false,
+    createdAt: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+    label: 'Điện thoại',
+    door: null,
+    failures: null,
+    retryAfter: null,
+  },
+  {
+    id: 3,
+    action: 'credential_expired',
+    kind: 'account',
+    actionLabel: 'Mật khẩu hết hạn — buộc đổi',
+    actorLabel: 'Hệ thống',
+    method: '',
+    mustChange: true,
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    label: null,
+    door: null,
+    failures: null,
+    retryAfter: null,
+  },
+  {
+    id: 2,
+    action: 'credential_changed',
+    kind: 'account',
+    actionLabel: 'Đổi mật khẩu',
+    actorLabel: 'Chính bạn',
+    method: '',
+    mustChange: false,
+    createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    label: null,
+    door: null,
+    failures: null,
+    retryAfter: null,
+  },
+  {
+    id: 1,
+    action: 'credential_issued',
+    kind: 'account',
+    actionLabel: 'Cấp tài khoản đăng nhập',
+    actorLabel: 'Cô Hương (GVCN 4A2)',
+    method: 'generated',
+    mustChange: true,
+    createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+    label: null,
+    door: null,
+    failures: null,
+    retryAfter: null,
+  },
+];
+
 // PA26: the class + homeroom teacher a parent sees for their child. Mirrors
 // ClassRepository::contextFor — real class row + teacher derived from scope.
 export const mockClassContext: ClassContext = {
@@ -116,6 +210,55 @@ export const mockSecondChild: StudentProfile = {
   longestStreak: 0,
   level: 6,
 };
+
+// PA52: live logins per learner. Mutable so a revoke really does clear the
+// screen — a mock that kept echoing "2 thiết bị" after the button would hide
+// exactly the behaviour the parent is asked to trust. Counts only, mirroring
+// the server, which never returns a token or uuid (§8).
+const mockSessionInventory: Record<number, { sessions: number; appPasswords: number }> = {
+  [mockStudentProfile.id]: { sessions: 1, appPasswords: 2 },
+  [mockSecondChild.id]: { sessions: 0, appPasswords: 0 },
+};
+
+function sessionPayload(studentId: number, revoked?: number) {
+  const inv = mockSessionInventory[studentId] ?? { sessions: 0, appPasswords: 0 };
+  return {
+    studentId,
+    total: inv.sessions + inv.appPasswords,
+    sessions: inv.sessions,
+    appPasswords: inv.appPasswords,
+    ...(revoked === undefined ? {} : { revoked }),
+  };
+}
+
+// PA55: the caller's own live devices, mirroring the server's shape — a derived
+// handle, a label and two timestamps, never a token (§8). Mutable, because a
+// mock that kept showing a device after "đăng xuất" would hide the very
+// behaviour the family is asked to trust.
+let mockDevices = ['Điện thoại', 'Máy tính'].map((label, index) => ({
+  handle: `devhandle${index + 1}${'0'.repeat(24)}`.slice(0, 24),
+  label,
+  createdAt: new Date(Date.now() - (3 + index * 6) * 86_400_000).toISOString(),
+  lastUsedAt: new Date(Date.now() - (index === 0 ? 5 * 60_000 : 2 * 86_400_000)).toISOString(),
+  current: index === 0,
+}));
+
+// PA56: the devices holding each child's account, mirroring the server's
+// projection — a handle, a label and two timestamps, never a token (§8). Seeded
+// from the PA52 inventory so the "N thiết bị" line and the rows always agree,
+// and no row is `current` because none of them is the caller's device.
+let mockChildDevices: Record<number, DeviceSession[]> = Object.fromEntries(
+  Object.entries(mockSessionInventory).map(([id, inv]) => [
+    Number(id),
+    ['Điện thoại', 'Máy tính bảng'].slice(0, inv.appPasswords).map((label, index) => ({
+      handle: `abadev${id}${index}`.padEnd(24, '0'),
+      label,
+      createdAt: new Date(Date.now() - (5 + index * 9) * 86_400_000).toISOString(),
+      lastUsedAt: index === 0 ? new Date(Date.now() - 8 * 60_000).toISOString() : null,
+      current: false,
+    })),
+  ])
+);
 
 // PA42: mock link-request queue, mirroring the demo seeder — one genuine
 // pending request the parent can see, unlinked cohort codes are requestable,
@@ -777,6 +920,38 @@ function buildParentActivityFeed(childId: number): ParentActivityFeed {
             score: null,
           }
     ),
+    // PA57: a device that signed in. Named exactly as the PA56 device list names
+    // it, and kept even after that device is signed out — the feed is history,
+    // not current state (§12).
+    {
+      id: `device:${childId}`,
+      type: 'device' as ParentActivityType,
+      title: 'Thiết bị mới đăng nhập: Điện thoại',
+      occurredAt: daysAgo(0, 7),
+      xpEarned: null,
+      score: null,
+    },
+    // PA59: a BROWSER sign-in — the same account password used on a page that
+    // mints no app token. Reads as a sign-in too (type `device`, so the panel
+    // link applies), but the wording keeps it distinguishable from PA57's.
+    {
+      id: `session:${childId}`,
+      type: 'device' as ParentActivityType,
+      title: 'Đăng nhập bằng trình duyệt: Máy tính',
+      occurredAt: daysAgo(1, 9),
+      xpEarned: null,
+      score: null,
+    },
+    // PA58: somebody was guessing the password. Same facts the server stores —
+    // how many tries, how long the wait — and, like the server, no address.
+    {
+      id: `security:${childId}`,
+      type: 'security' as ParentActivityType,
+      title: 'Nhiều lần đăng nhập sai vào tài khoản của con (5 lần sai, tạm khoá 15 phút)',
+      occurredAt: daysAgo(1, 21),
+      xpEarned: null,
+      score: null,
+    },
   ]
     .sort((a, b) => String(b.occurredAt ?? '').localeCompare(String(a.occurredAt ?? '')))
     .slice(0, 15);
@@ -814,6 +989,25 @@ export const handlers = [
   http.post('*/wp-json/aba/v1/auth/refresh', () => {
     return HttpResponse.json({ success: true });
   }),
+  // PA48 parity: the real endpoint verifies the old secret server-side; the mock
+  // mirrors the shape (204, no body) plus the two cheapest validations.
+  http.post('*/wp-json/aba/v1/auth/change-password', async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { oldPassword?: string; newPassword?: string };
+    if (!body.oldPassword || !body.newPassword) {
+      return HttpResponse.json(
+        { error: { code: 'INVALID_REQUEST', message: 'Current and new password are required.', details: [] } },
+        { status: 400 }
+      );
+    }
+    if ((body.newPassword ?? '').length < 8) {
+      return HttpResponse.json(
+        { error: { code: 'PASSWORD_TOO_SHORT', message: 'New password must be at least 8 characters.', details: [] } },
+        { status: 400 }
+      );
+    }
+    if (mockAuthSession) mockAuthSession = { ...mockAuthSession, mustChangePassword: false };
+    return new HttpResponse(null, { status: 204 });
+  }),
 
   // Session nonce bootstrap (PA14) — mirrors the backend: a live session gets a
   // nonce, an anonymous one gets an empty string.
@@ -835,6 +1029,79 @@ export const handlers = [
   http.get('*/wp-json/aba/v1/students/:id', ({ params }) =>
     HttpResponse.json({ ...mockStudentProfile, id: Number(params.id) })
   ),
+
+  // PA49: the learner's credential audit trail (staff / parent / self read the
+  // same append-only log; the mock is scope-free since it's just demo data).
+  // PA61: `?kind=` is honoured here too, so a filter chip demonstrably narrows
+  // the list instead of the mock quietly returning everything.
+  http.get('*/wp-json/aba/v1/students/:id/credential-events', ({ request, params }) => {
+    const kind = new URL(request.url).searchParams.get('kind') ?? '';
+    const events = kind ? mockCredentialEvents.filter((ev) => ev.kind === kind) : mockCredentialEvents;
+    return HttpResponse.json({ studentId: Number(params.id), events });
+  }),
+
+  // PA52: live logins as COUNTS ONLY (never a token/uuid, mirroring the server),
+  // and the parent's "sign out every device". The revoke is idempotent and
+  // audited server-side; the mock just zeroes what it reports.
+  http.get('*/wp-json/aba/v1/students/:id/sessions', ({ params }) =>
+    HttpResponse.json(sessionPayload(Number(params.id)))
+  ),
+  http.post('*/wp-json/aba/v1/students/:id/sessions/revoke', ({ params }) => {
+    const studentId = Number(params.id);
+    const before = sessionPayload(studentId);
+    mockSessionInventory[studentId] = { sessions: 0, appPasswords: 0 };
+    return HttpResponse.json(sessionPayload(studentId, before.total));
+  }),
+
+  // PA56: a child's devices, named for the parent. Same non-secret projection
+  // as PA55 with no `current` row, and ending one decrements the PA52 count so
+  // the two panels can never disagree.
+  http.get('*/wp-json/aba/v1/students/:id/devices', ({ params }) => {
+    const studentId = Number(params.id);
+    const devices = mockChildDevices[studentId] ?? [];
+    return HttpResponse.json({ studentId, devices, count: devices.length, maxDevices: 6 });
+  }),
+  http.delete('*/wp-json/aba/v1/students/:id/devices/:handle', ({ params }) => {
+    const studentId = Number(params.id);
+    const handle = String(params.handle);
+    const devices = mockChildDevices[studentId] ?? [];
+    const ended = devices.find((d) => d.handle === handle);
+    if (!ended) {
+      return HttpResponse.json(
+        { error: { code: 'ABA_DEVICE_NOT_FOUND', message: 'This device is not signed in.' } },
+        { status: 404 }
+      );
+    }
+    mockChildDevices[studentId] = devices.filter((d) => d.handle !== handle);
+    const inv = mockSessionInventory[studentId];
+    if (inv) {
+      mockSessionInventory[studentId] = { ...inv, appPasswords: Math.max(0, inv.appPasswords - 1) };
+    }
+    return HttpResponse.json({ studentId, revoked: 1, label: ended.label, count: mockChildDevices[studentId].length });
+  }),
+
+  // PA55: the caller's own devices — list, end one, end the others. Mutating the
+  // shared array is what makes the panel honest after a click.
+  http.get('*/wp-json/aba/v1/me/devices', () =>
+    HttpResponse.json({ devices: mockDevices, count: mockDevices.length, maxDevices: 6 })
+  ),
+  http.delete('*/wp-json/aba/v1/me/devices', () => {
+    const revoked = mockDevices.filter((d) => !d.current).length;
+    mockDevices = mockDevices.filter((d) => d.current);
+    return HttpResponse.json({ revoked });
+  }),
+  http.delete('*/wp-json/aba/v1/me/devices/:handle', ({ params }) => {
+    const handle = String(params.handle);
+    const before = mockDevices.length;
+    mockDevices = mockDevices.filter((d) => d.handle !== handle);
+    if (mockDevices.length === before) {
+      return HttpResponse.json(
+        { error: { code: 'ABA_DEVICE_NOT_FOUND', message: 'This device is not signed in.' } },
+        { status: 404 }
+      );
+    }
+    return HttpResponse.json({ revoked: 1 });
+  }),
 
   // Learning path (derived from the recommendation engine, PA7)
   http.get('*/wp-json/aba/v1/learning/path', () =>

@@ -1,16 +1,20 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@aba/api-client';
 import { Card, Badge, Button, SectionHeader } from '@aba/ui';
-import { Phone, Mail, Shield, Plus, Link2, School, ChevronRight, Clock, X } from 'lucide-react';
+import { Phone, Mail, Shield, Plus, Link2, School, ChevronRight, Clock, X, History, MonitorSmartphone, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import { parentLinkSchema } from '@aba/validation';
 import type { ParentLinkRequest } from '@aba/types';
 import { useParentChildren } from '../../../features/parent/ParentChildrenContext';
+import { DevicesPanel } from '../../../features/auth/DevicesPanel';
+import { ChildDevicesPanel } from '../../../features/auth/ChildDevicesPanel';
+import { CredentialHistory } from '../../../features/auth/CredentialHistory';
 import { Avatar } from '../../../components/Avatar';
 import { formatClassLabel } from '../../../lib/classLabel';
+import { parseDevicesTarget } from '../../../lib/deviceLink';
 
 // PA42 — server envelope statuses of a submission, in parent-facing words.
 const RESULT_COPY: Record<string, { ok: boolean; text: string }> = {
@@ -36,6 +40,13 @@ export default function ParentProfilePage() {
   // The linked-children list comes from the shared parent context (single
   // source, no duplicate query); the profile screen lists them all.
   const { children } = useParentChildren();
+
+  // PA49 — a parent may inspect *who* issued / reset their child's login and
+  // when (append-only audit trail). Server-gated per child via §8; opened
+  // lazily so a screen full of children doesn't fetch history nobody asked for.
+  // PA61 — the list itself (all four kinds + filters) lives in its own feature
+  // component; this state only decides WHICH child's panel is open.
+  const [auditChildId, setAuditChildId] = useState<number | null>(null);
 
   // PA42 — "Liên kết thêm con" is request-then-approve: the submission only
   // joins a queue and the school reviews it server-side (§8) — a parent can
@@ -73,6 +84,50 @@ export default function ParentProfilePage() {
     linkMutation.mutate();
   };
 
+  // PA52 — the child's live logins, as COUNTS ONLY (the server never returns a
+  // token), plus "đăng xuất mọi thiết bị" for the suspected-leak case. This is
+  // strictly weaker than the reset right a parent already has, so it needs no
+  // extra permission — and it is audited like every other credential action.
+  const [secChildId, setSecChildId] = useState<number | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [revokeFeedback, setRevokeFeedback] = useState<string | null>(null);
+  const { data: sessionData, isLoading: sessionLoading } = useQuery({
+    queryKey: ['child-sessions', secChildId],
+    queryFn: () => api.student.getSessions(secChildId as number),
+    enabled: secChildId !== null,
+  });
+  const revokeMutation = useMutation({
+    mutationFn: (childId: number) => api.student.revokeSessions(childId),
+    onSuccess: (res) => {
+      setConfirmRevoke(false);
+      setRevokeFeedback(
+        res.revoked && res.revoked > 0
+          ? `Đã đăng xuất ${res.revoked} thiết bị. Con cần đăng nhập lại bằng mật khẩu hiện tại.`
+          : 'Không có thiết bị nào đang đăng nhập.'
+      );
+      // The device count just changed, and a real revocation appended to the
+      // audit trail — refresh both so the two panels never disagree.
+      queryClient.invalidateQueries({ queryKey: ['child-sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['child-credential-events'] });
+    },
+    onError: (err: unknown) => {
+      const message = (err as { error?: { message?: string } })?.error?.message;
+      setRevokeFeedback(message || 'Không đăng xuất được. Vui lòng thử lại.');
+    },
+  });
+
+  // PA57 — the activity feed's "Thiết bị mới đăng nhập" row links here as
+  // `?devices=<id>`, so the panel opens on THAT child instead of leaving the
+  // parent to find the button. Read after mount rather than through
+  // useSearchParams: the static build then needs no Suspense boundary, and the
+  // server and the client render the same closed panel first.
+  useEffect(() => {
+    const target = parseDevicesTarget(window.location.search);
+    if (target !== null) {
+      setSecChildId(target);
+    }
+  }, []);
+
   const initials = (parentUser?.displayName ?? 'Nguyễn Thị Lan')
     .split(' ').filter(Boolean).slice(-2).map((w) => w[0]).join('').toUpperCase();
 
@@ -103,6 +158,10 @@ export default function ParentProfilePage() {
           <Contact icon={<Mail className="w-4 h-4" />} value={parentUser?.email ?? 'lan.nguyen@example.com'} />
         </div>
       </Card>
+
+      {/* PA55 — the parent's OWN devices. A child's devices stay behind the
+          per-child panel above (that one is staff-scoped, §8). */}
+      <DevicesPanel />
 
       {/* Linked children */}
       <div>
@@ -160,20 +219,121 @@ export default function ParentProfilePage() {
 
         <div className="space-y-3">
           {children?.map((child) => (
-            <Link key={child.id} href="/parent">
-              <Card hover className="p-4 flex items-center gap-4">
-                <Avatar src={child.avatarUrl} name={child.fullName} className="w-12 h-12 rounded-2xl object-cover text-base" />
-                <div className="min-w-0 flex-1">
-                  <div className="font-black text-slate-800 text-sm leading-tight">{child.fullName}</div>
-                  <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                    <School className="w-3.5 h-3.5" /> {formatClassLabel(child.className)} · {child.schoolName}
-                    <span className="text-slate-300">·</span> Mã {child.studentCode}
+            <div key={child.id}>
+              <Link href="/parent">
+                <Card hover className="p-4 flex items-center gap-4">
+                  <Avatar src={child.avatarUrl} name={child.fullName} className="w-12 h-12 rounded-2xl object-cover text-base" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-black text-slate-800 text-sm leading-tight">{child.fullName}</div>
+                    <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                      <School className="w-3.5 h-3.5" /> {formatClassLabel(child.className)} · {child.schoolName}
+                      <span className="text-slate-300">·</span> Mã {child.studentCode}
+                      {/* PA46 — staff provisions the login; parents see the account
+                          name (never the password) to sign their child in. */}
+                      {child.username && (
+                        <><span className="text-slate-300">·</span> <span className="font-black text-brand-700">Tài khoản: {child.username}</span></>
+                      )}
+                    </div>
                   </div>
+                  <Badge variant="success">Đang hoạt động</Badge>
+                  <ChevronRight className="w-5 h-5 text-slate-300 shrink-0" />
+                </Card>
+              </Link>
+              {/* PA49/PA52 — both toggles sit OUTSIDE the child-link so opening
+                  one never navigates to the overview. */}
+              {child.username && (
+                <div className="mt-1.5">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1.5 text-xs"
+                      onClick={() => setAuditChildId((v) => (v === child.id ? null : child.id))}
+                    >
+                      <History className="w-3.5 h-3.5" />
+                      {auditChildId === child.id ? 'Ẩn lịch sử bảo mật' : 'Lịch sử bảo mật'}
+                    </Button>
+                    {/* PA52 — device count + sign-out-all, next to the history. */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1.5 text-xs"
+                      onClick={() => {
+                        setSecChildId((v) => (v === child.id ? null : child.id));
+                        setConfirmRevoke(false);
+                        setRevokeFeedback(null);
+                      }}
+                    >
+                      <MonitorSmartphone className="w-3.5 h-3.5" />
+                      {secChildId === child.id ? 'Ẩn thiết bị' : 'Thiết bị & bảo mật'}
+                    </Button>
+                  </div>
+                  {auditChildId === child.id && <CredentialHistory childId={child.id} />}
+                  {secChildId === child.id && (
+                    <Card className="mt-1.5 p-3 bg-slate-50/60 space-y-2">
+                      {sessionLoading ? (
+                        <p className="text-xs font-bold text-slate-400">Đang tải…</p>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <MonitorSmartphone className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="text-xs font-black text-slate-700">
+                              {(sessionData?.total ?? 0) > 0
+                                ? `${sessionData?.total} thiết bị đang đăng nhập`
+                                : 'Không có thiết bị nào đang đăng nhập'}
+                            </span>
+                            {(sessionData?.total ?? 0) > 0 && (
+                              <span className="text-[11px] font-bold text-slate-400">
+                                {sessionData?.appPasswords} thiết bị ứng dụng · {sessionData?.sessions} phiên trình duyệt
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] font-medium text-slate-400">
+                            Dùng khi bạn nghi mật khẩu của con đã bị người khác biết. Con sẽ phải đăng nhập lại;
+                            mật khẩu giữ nguyên và mọi lần đăng xuất đều được ghi vào lịch sử đăng nhập.
+                          </p>
+                          {/* PA56 — the count, spelled out: which device, last used when. */}
+                          <ChildDevicesPanel childId={child.id} />
+                          {confirmRevoke ? (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Button
+                                size="sm"
+                                variant="rose"
+                                disabled={revokeMutation.isPending}
+                                onClick={() => revokeMutation.mutate(child.id)}
+                              >
+                                {revokeMutation.isPending ? 'Đang đăng xuất…' : 'Chắc chắn đăng xuất'}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setConfirmRevoke(false)}>
+                                Huỷ
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5"
+                              disabled={(sessionData?.total ?? 0) === 0 || revokeMutation.isPending}
+                              onClick={() => {
+                                setRevokeFeedback(null);
+                                setConfirmRevoke(true);
+                              }}
+                            >
+                              <LogOut className="w-3.5 h-3.5" /> Đăng xuất mọi thiết bị
+                            </Button>
+                          )}
+                          {revokeFeedback && (
+                            <p className={'text-xs font-bold ' + (revokeMutation.isError ? 'text-rose-600' : 'text-brand-700')}>
+                              {revokeFeedback}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </Card>
+                  )}
                 </div>
-                <Badge variant="success">Đang hoạt động</Badge>
-                <ChevronRight className="w-5 h-5 text-slate-300 shrink-0" />
-              </Card>
-            </Link>
+              )}
+            </div>
           ))}
         </div>
       </div>

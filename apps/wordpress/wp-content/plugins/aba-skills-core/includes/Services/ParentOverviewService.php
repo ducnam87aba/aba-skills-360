@@ -15,6 +15,7 @@ use ABA\Core\Repositories\LessonProgressRepository;
 use ABA\Core\Repositories\MissionProgressRepository;
 use ABA\Core\Repositories\XpTransactionRepository;
 use ABA\Core\Repositories\ClassRepository;
+use ABA\Core\Repositories\EventRepository;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -29,6 +30,7 @@ class ParentOverviewService {
     private XpTransactionRepository $xpRepo;
     private GamificationService $gamification;
     private ClassRepository $classRepo;
+    private EventRepository $events;
 
     public function __construct() {
         $this->studentRepo = new StudentRepository();
@@ -39,6 +41,7 @@ class ParentOverviewService {
         $this->xpRepo = new XpTransactionRepository();
         $this->gamification = new GamificationService();
         $this->classRepo = new ClassRepository();
+        $this->events = new EventRepository();
     }
 
     /**
@@ -188,6 +191,83 @@ class ParentOverviewService {
                     'score' => null,
                 ];
             }
+        }
+
+        // 3) PA57 — a new device signed in. The one item in this feed that is
+        //    about the ACCOUNT rather than about learning: it is what turns
+        //    "which devices hold my child" (PA56) from a screen you must
+        //    remember to open into an alert the family actually receives. The
+        //    label is all the server ever stored, so nothing replayable is here.
+        foreach ($this->events->listForStudent($studentId, [EventRepository::CREDENTIAL_DEVICE_ADDED], 10) as $row) {
+            $payload = json_decode((string) ($row->payload_json ?? ''), true) ?: [];
+            $label = trim((string) ($payload['label'] ?? ''));
+            $items[] = [
+                'id' => 'device:' . (int) $row->id,
+                'type' => 'device',
+                'title' => $label !== '' ? 'Thiết bị mới đăng nhập: ' . $label : 'Thiết bị mới đăng nhập',
+                'occurredAt' => $this->toIso((string) ($row->created_at ?? '')),
+                'xpEarned' => null,
+                'score' => null,
+            ];
+        }
+
+        // 4) PA58 — somebody was guessing the child's password. PA53 already
+        //    records ONE row per lock engagement (a burst of five is one event,
+        //    not five), and never the offending address: the family needs the
+        //    warning, not the IP (§8). Without this the loudest security signal
+        //    the platform produces was visible only to staff.
+        foreach ($this->events->listForStudent($studentId, [EventRepository::LOGIN_THROTTLED], 5) as $row) {
+            $payload = json_decode((string) ($row->payload_json ?? ''), true) ?: [];
+            $failures = (int) ($payload['failures'] ?? 0);
+            $minutes = (int) round(((int) ($payload['retryAfter'] ?? 0)) / 60);
+            // The source bucket watches one address spraying MANY accounts, so it
+            // must not claim this child was the target — only that it happened.
+            $title = (string) ($payload['scope'] ?? '') === 'source'
+                ? 'Phát hiện dò mật khẩu từ cùng một nơi'
+                : 'Nhiều lần đăng nhập sai vào tài khoản của con';
+            $facts = [];
+            if ($failures > 0) {
+                $facts[] = $failures . ' lần sai';
+            }
+            if ($minutes > 0) {
+                $facts[] = 'tạm khoá ' . $minutes . ' phút';
+            }
+            if ($facts !== []) {
+                $title .= ' (' . implode(', ', $facts) . ')';
+            }
+            $items[] = [
+                'id' => 'security:' . (int) $row->id,
+                'type' => 'security',
+                'title' => $title,
+                'occurredAt' => $this->toIso((string) ($row->created_at ?? '')),
+                'xpEarned' => null,
+                'score' => null,
+            ];
+        }
+
+        // 5) PA59 — the same question for a sign-in that mints no app token and
+        //    so is invisible to the PA57 alert. Its own id prefix keeps the two
+        //    apart while both read as a sign-in on screen; the payload only ever
+        //    held the door and a device label (§8). PA60 splits the wording: a
+        //    script replaying the password is not "a browser", and a parent who
+        //    reads it as one would look for a device that was never involved.
+        foreach ($this->events->listForStudent($studentId, [EventRepository::CREDENTIAL_SESSION_OPENED], 10) as $row) {
+            $payload = json_decode((string) ($row->payload_json ?? ''), true) ?: [];
+            $label = trim((string) ($payload['label'] ?? ''));
+            // Rows written before PA60 carry no door; they were all cookie.
+            $xmlrpc = (string) ($payload['door'] ?? '') === CredentialSessionService::DOOR_XMLRPC;
+            $title = $xmlrpc ? 'Đăng nhập qua ứng dụng khác' : 'Đăng nhập bằng trình duyệt';
+            if ($label !== '') {
+                $title .= ': ' . $label;
+            }
+            $items[] = [
+                'id' => 'session:' . (int) $row->id,
+                'type' => 'device',
+                'title' => $title,
+                'occurredAt' => $this->toIso((string) ($row->created_at ?? '')),
+                'xpEarned' => null,
+                'score' => null,
+            ];
         }
 
         // Newest first; ISO-8601 instants sort lexicographically, nulls sink.

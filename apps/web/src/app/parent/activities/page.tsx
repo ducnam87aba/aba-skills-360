@@ -4,14 +4,22 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@aba/api-client';
 import { Card, Badge, SectionHeader } from '@aba/ui';
-import { Zap, BookOpen, Award, CheckCircle2 } from 'lucide-react';
+import { Zap, BookOpen, Award, CheckCircle2, MonitorSmartphone, ShieldAlert, ChevronRight } from 'lucide-react';
+import Link from 'next/link';
 import type { ParentActivityType } from '@aba/types';
 import { useParentChildren } from '../../../features/parent/ParentChildrenContext';
 
+// PA57 — `device` is the one entry about the child's ACCOUNT rather than about
+// learning: it answers "is somebody else holding my child's login?" without the
+// parent having to remember to open the device screen.
+// PA58 — `security` is the loudest of them: somebody was guessing the password.
+// It reads rose rather than amber so it cannot be mistaken for a new sign-in.
 const TYPE_META: Record<ParentActivityType, { icon: React.ReactNode; color: string; label: string }> = {
   lesson: { icon: <BookOpen className="w-5 h-5" />, color: '#1cb0f6', label: 'Bài học' },
   mission: { icon: <CheckCircle2 className="w-5 h-5" />, color: '#0aa96f', label: 'Nhiệm vụ' },
   badge: { icon: <Award className="w-5 h-5" />, color: '#7c5cff', label: 'Thành tích' },
+  device: { icon: <MonitorSmartphone className="w-5 h-5" />, color: '#f59e0b', label: 'Bảo mật' },
+  security: { icon: <ShieldAlert className="w-5 h-5" />, color: '#e11d48', label: 'Cảnh báo' },
 };
 
 // PA40: the feed is derived server-side from the progress/XP ledgers and the
@@ -47,7 +55,7 @@ export default function ParentActivitiesPage() {
       <SectionHeader
         eyebrow="Thời gian thực"
         title="Nhật ký hoạt động của con"
-        description="Các bài học, nhiệm vụ và thành tích con vừa hoàn thành gần đây."
+        description="Bài học, nhiệm vụ và thành tích của con — kèm những thiết bị vừa đăng nhập vào tài khoản."
         action={
           <Badge variant="success">
             <Zap className="w-3.5 h-3.5" /> +{feed?.weeklyXp ?? 0} XP tuần này
@@ -66,7 +74,14 @@ export default function ParentActivitiesPage() {
             {/* vertical connector */}
             <span className="absolute left-[23px] top-4 bottom-4 w-0.5 bg-slate-100 rounded-full" aria-hidden />
             {items.map((act) => {
-              const meta = TYPE_META[act.type];
+              // A server newer than this build can send a type this bundle has
+              // never heard of; the title still arrives, so render it neutrally
+              // instead of throwing on a missing colour.
+              const meta = TYPE_META[act.type] ?? {
+                icon: <ShieldAlert className="w-5 h-5" />,
+                color: '#94a3b8',
+                label: 'Hoạt động',
+              };
               return (
                 <li key={act.id} className="relative flex items-center gap-4 py-2.5">
                   <span
@@ -91,6 +106,20 @@ export default function ParentActivitiesPage() {
                     {act.score !== null && (
                       <div className="text-[11px] font-bold text-slate-400 mt-0.5">Điểm {act.score}%</div>
                     )}
+                    {/* PA57/PA58 — straight through to THAT child's device list,
+                        so an unexpected sign-in (or a lockout) is one click from
+                        being inspected and ended. */}
+                    {(act.type === 'device' || act.type === 'security') && childId ? (
+                      <Link
+                        href={`/parent/profile?devices=${childId}`}
+                        className={`inline-flex items-center gap-0.5 text-[11px] font-black hover:underline whitespace-nowrap ${
+                          act.type === 'security' ? 'text-rose-600' : 'text-co'
+                        }`}
+                      >
+                        {act.type === 'security' ? 'Kiểm tra bảo mật' : 'Quản lý thiết bị'}
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </Link>
+                    ) : null}
                   </div>
                 </li>
               );

@@ -61,7 +61,7 @@ export function ParentChildrenProvider({ children: node }: { children: React.Rea
     queryFn: () => api.parent.getChildren(),
   });
 
-  const list = data ?? [];
+  const list = useMemo(() => data ?? [], [data]);
   // Selection is per tab + per parent account (sessionStorage): it survives
   // navigation and remounts, resets on a new tab, and the key can never leak
   // the choice across logins. Clearing it falls back to the primary child.
