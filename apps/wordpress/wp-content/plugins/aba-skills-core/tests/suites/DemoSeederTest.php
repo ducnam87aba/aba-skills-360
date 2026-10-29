@@ -12,7 +12,7 @@
  * Next rewrite uses). PA38 extends the seed with gamification ground truth
  * (lesson progress, XP ledger rows, streak calendar, mission history) and this
  * suite asserts the derived surfaces light up. Fixes are live demo fixtures, so
- * nothing is cleaned up; only the login-failure transient is restored in
+ * nothing is cleaned up; only the sign-in throttle buckets are cleared in
  * finally.
  *
  * @package ABA_Skills_Core
@@ -24,7 +24,6 @@ use ABA\Core\Services\SkillsProfileService;
 use ABA\Core\Services\GamificationService;
 use ABA\Core\Repositories\LessonProgressRepository;
 use ABA\Core\Repositories\StudentRepository;
-use ABA\Core\REST\AuthController;
 
 return function (AbaTestKit $kit): void {
     $kit->section('DemoSeederTest — real-backend demo identities + cohort (PA37)');
@@ -39,6 +38,19 @@ return function (AbaTestKit $kit): void {
 
     $beforeU = $beforeC = $beforeS = 0;
     $beforeL = $beforeSt = $beforeP = 0;
+
+    // PA53 — the attempt counter lives in LoginThrottleService now, keyed by
+    // credential + address. Clear the demo logins' buckets on both sides of the
+    // run: the cohort probe below deliberately fails one authentication, and an
+    // earlier suite must never hand this one a live lock.
+    $throttle = new \ABA\Core\Services\LoginThrottleService();
+    $clearThrottle = static function () use ($throttle): void {
+        foreach (['aba_student_1', 'aba_cohort_101'] as $demoLogin) {
+            delete_transient($throttle->accountKey($demoLogin, $throttle->clientAddress()));
+        }
+        delete_transient($throttle->ipKey($throttle->clientAddress()));
+    };
+    $clearThrottle();
 
     try {
         DemoUserSeeder::seed();
@@ -126,10 +138,13 @@ return function (AbaTestKit $kit): void {
         $kit->check('cohort user cannot authenticate with the demo password', $cohort && !(wp_authenticate($cohort->user_login, DemoUserSeeder::DEMO_PASSWORD) instanceof WP_User));
 
         // ---- App-password token over REST (the PA37 headless flow) ---------
-        // WP 6.5+ authenticates app passwords only via Basic; the harness mirrors
-        // exactly what the api-client sends. Skipped cleanly when the
-        // environment forbids app passwords (flag off, un-seeded production).
-        delete_transient(AuthController::failKey('aba_student_1'));
+        // WP 6.5+ authenticates app passwords only via Basic, and only on a
+        // request it recognises as an API call (REST_REQUEST, which a CLI harness
+        // never defines) — so the filter below is what a real /wp-json call gets.
+        // A fresh HTTP request also starts with no cached user: without the reset
+        // the token check would silently ride the identity login just minted.
+        // Skipped cleanly when the environment forbids app passwords.
+        $clearThrottle();
         $req = new WP_REST_Request('POST', '/aba/v1/auth/login');
         $req->set_header('Content-Type', 'application/json');
         $req->set_body(wp_json_encode(['username' => 'aba_student_1', 'password' => DemoUserSeeder::DEMO_PASSWORD]));
@@ -138,10 +153,15 @@ return function (AbaTestKit $kit): void {
         $token = $resp->get_data()['token'] ?? null;
         if ($token !== null) {
             $kit->check('login hands back an app-password token', is_string($token) && preg_match('/^[A-Za-z0-9 ]{24,29}$/', $token) === 1);
+            add_filter('application_password_is_api_request', '__return_true');
+            global $current_user;
+            $current_user = null;
             $_SERVER['PHP_AUTH_USER'] = 'aba_student_1';
             $_SERVER['PHP_AUTH_PW'] = $token;
             $me = rest_do_request(new WP_REST_Request('GET', '/aba/v1/me'));
             unset($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW']);
+            remove_filter('application_password_is_api_request', '__return_true');
+            $current_user = null;
             $kit->checkSame('Basic app-password authenticates GET /me => 200', 200, $me->get_status());
             $kit->checkSame('token identity is the demo learner', (int) $student->ID, (int) ($me->get_data()['id'] ?? 0));
         } else {
@@ -218,7 +238,6 @@ return function (AbaTestKit $kit): void {
         $kit->check('path current node sits inside the active unit', !empty($path->get_data()['currentNodeId']));
     } finally {
         // Never leave a lockout or failure window on the advertised demo login.
-        delete_transient(AuthController::failKey('aba_student_1'));
-        delete_transient(AuthController::failKey('aba_cohort_101'));
+        $clearThrottle();
     }
 };

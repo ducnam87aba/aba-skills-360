@@ -326,6 +326,11 @@ class DemoUserSeeder {
             if ($sid <= 0) {
                 continue;
             }
+            // The demo cohort must always stand for a full, active class so the
+            // k-anonymity benchmark (§8) and its sample counts stay stable. A
+            // prior E2E pass may have archived one of these learners through the
+            // roster screen; reassert the seeded identities' active state here.
+            $wpdb->update($students, ['status' => 'active'], ['id' => $sid], ['%s'], ['%d']);
             foreach ($row['scores'] as $code => $score) {
                 $scores->upsertScore($sid, (string) $code, 'core_competency', (float) $score, self::levelFor((float) $score), 0, 'student', 'ABA-DEMO-1.0');
             }
@@ -406,8 +411,10 @@ class DemoUserSeeder {
             $i++;
         }
         // …plus unit-ce-node-1 stamped "today" so the daily lesson mission
-        // starts with a live progress bar on a fresh seed.
-        self::seedProgressRow($progress, $studentId, 'unit-ce-node-1', 30, current_time('mysql', 1));
+        // starts with a live progress bar on a fresh seed. Re-stamped on every
+        // run (see touchProgressToday) so a midnight rollover does not strand
+        // mission 1 on yesterday's completed_at.
+        self::touchProgressToday($progress, $studentId, 'unit-ce-node-1', 30);
 
         // 2) XP ledger — one row per completed node with a stable idempotency
         // key, so a restart never double-pays (§12). The "today" row is what
@@ -469,6 +476,36 @@ class DemoUserSeeder {
             'score' => 100.0,
             'xp_awarded' => $xpAwarded,
             'completed_at' => $completedAt,
+        ], ['%d', '%s', '%s', '%f', '%d', '%s']);
+    }
+
+    /**
+     * Insert-or-refresh the "today" lesson node so the daily lesson mission is
+     * genuinely complete on the current date. Unlike seedProgressRow this
+     * UPDATEs an existing row's completed_at to now (never adds a row), so the
+     * progress-row idempotency count is unchanged across midnight rollovers.
+     */
+    private static function touchProgressToday(string $table, int $studentId, string $nodeId, int $xpAwarded): void {
+        global $wpdb;
+        $now = current_time('mysql', 1);
+        $found = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE student_id = %d AND node_id = %s",
+            $studentId, $nodeId
+        ));
+        if ($found > 0) {
+            $wpdb->update($table, ['status' => 'completed', 'completed_at' => $now], [
+                'student_id' => $studentId,
+                'node_id' => $nodeId,
+            ], ['%s', '%s'], ['%d', '%s']);
+            return;
+        }
+        $wpdb->insert($table, [
+            'student_id' => $studentId,
+            'node_id' => $nodeId,
+            'status' => 'completed',
+            'score' => 100.0,
+            'xp_awarded' => $xpAwarded,
+            'completed_at' => $now,
         ], ['%d', '%s', '%s', '%f', '%d', '%s']);
     }
 

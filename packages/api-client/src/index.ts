@@ -27,6 +27,13 @@ import type {
   ParentLinkRequest,
   ParentLinkRequestResult,
   RecommendationsResult,
+  CredentialAuditResult,
+  CredentialEventKind,
+  StudentSessions,
+  DeviceSessionList,
+  DeviceRevokeResult,
+  StudentDeviceList,
+  StudentDeviceRevokeResult,
 } from '@aba/types';
 
 export interface ApiClientConfig {
@@ -89,6 +96,12 @@ export class AbaApiClient {
   private getNonce?: () => string | null;
   // PA37 — the login name paired with the app password (Basic needs both).
   private basicUser: string | null = null;
+  // PA48 — the app token is mirrored in memory the instant setAuth() runs, so a
+  // re-login (after change-password killed the old secret) arms the pair
+  // atomically. Reading it only from localStorage let a request fired before
+  // zustand persisted replay the DEAD token, which WP rejects at its auth layer
+  // before the login callback ever validates the new password.
+  private basicToken: string | null = null;
   // PA14: the wp_rest CSRF nonce for the cookie session, pushed by the app after
   // login/refresh. State-changing requests echo it back via the X-WP-Nonce header.
   private sessionNonce: string | null = null;
@@ -106,6 +119,7 @@ export class AbaApiClient {
   /** PA37 — register the Basic credential pair issued at login (null clears). */
   setAuth(username: string | null, token: string | null): void {
     this.basicUser = username && token ? username : null;
+    this.basicToken = username && token ? token : null;
   }
 
   /** Register the session nonce (empty/null clears it). */
@@ -117,7 +131,7 @@ export class AbaApiClient {
     return this.sessionNonce ?? (this.getNonce ? this.getNonce() : null);
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, authExempt = false): Promise<T> {
     const url = `${this.baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -132,21 +146,27 @@ export class AbaApiClient {
     // token from storage and keeping the username in memory sent Bearer (which
     // WP rejects) on requests fired before the store re-armed setAuth() after a
     // reload. An explicit bearer token remains for server-side callers.
+    // PA48 — the credential-establishing calls (/auth/login) are authExempt: an
+    // old token is dead after a password change, so replaying it in the header
+    // would make core reject the very request meant to fetch a fresh one.
     const stored = readStoredAuth();
-    const token = this.getToken ? this.getToken() : null;
+    const token = this.basicToken ?? (this.getToken ? this.getToken() : null);
     const basicName = this.basicUser ?? stored?.username ?? null;
-    if (token && basicName) {
-      // UTF-8-safe base64 (logins are ASCII today, but never rely on that).
-      const bytes = new TextEncoder().encode(`${basicName}:${token}`);
-      let binary = '';
-      bytes.forEach((b) => { binary += String.fromCharCode(b); });
-      headers['Authorization'] = `Basic ${btoa(binary)}`;
-    } else if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (!authExempt) {
+      if (token && basicName) {
+        // UTF-8-safe base64 (logins are ASCII today, but never rely on that).
+        const bytes = new TextEncoder().encode(`${basicName}:${token}`);
+        let binary = '';
+        bytes.forEach((b) => { binary += String.fromCharCode(b); });
+        headers['Authorization'] = `Basic ${btoa(binary)}`;
+      } else if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
     }
 
-    // Same-origin cookie callers must satisfy WP's CSRF check (PA14).
-    const nonce = this.getNonceValue();
+    // Same-origin cookie callers must satisfy WP's CSRF check (PA14). An
+    // authExempt call carries no session at all, so no stale nonce rides along.
+    const nonce = authExempt ? null : this.getNonceValue();
     if (nonce) {
       headers['X-WP-Nonce'] = nonce;
     }
@@ -186,7 +206,7 @@ export class AbaApiClient {
       return this.request<LoginResult>('/auth/login', {
         method: 'POST',
         body: JSON.stringify(credentials),
-      });
+      }, true);
     },
     logout: async () => {
       return this.request<void>('/auth/logout', {
@@ -196,6 +216,14 @@ export class AbaApiClient {
     refresh: async () => {
       return this.request<{ success: boolean }>('/auth/refresh', {
         method: 'POST',
+      });
+    },
+    // PA48 — swap the signed-in user's own password. Success is a 204 that also
+    // revokes the caller's app token, so the client must re-login afterwards.
+    changePassword: async (payload: { oldPassword: string; newPassword: string }) => {
+      return this.request<void>('/auth/change-password', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       });
     },
     me: async () => {
@@ -208,12 +236,72 @@ export class AbaApiClient {
     },
   };
 
+  // PA55 — the caller's OWN devices, scoped by the session server-side (§8).
+  // Rows carry a derived handle, a label and two timestamps — never a token —
+  // so the list is safe to render without a second permission check.
+  readonly devices = {
+    list: async () => {
+      return this.request<DeviceSessionList>('/me/devices');
+    },
+    // End one device. The server answers 404 when the handle is already gone,
+    // which the caller must surface rather than pretend it worked.
+    revoke: async (handle: string) => {
+      return this.request<DeviceRevokeResult>(`/me/devices/${encodeURIComponent(handle)}`, {
+        method: 'DELETE',
+      });
+    },
+    // "sign out everywhere else" — keeps the device that made this call.
+    revokeOthers: async () => {
+      return this.request<DeviceRevokeResult>('/me/devices', {
+        method: 'DELETE',
+      });
+    },
+  };
+
   readonly student = {
     getMe: async () => {
       return this.request<StudentProfile>('/students/me');
     },
     getById: async (studentId: number) => {
       return this.request<StudentProfile>(`/students/${studentId}`);
+    },
+    // PA49 — the learner's append-only credential audit trail (who issued /
+    // reset / changed the login). Server gates read access by scope (staff /
+    // linked parent / self), never trusts the id in the URL (§8).
+    // PA61 — `kind` narrows the same trail to one dimension; the server
+    // validates it (400 on an unknown value) rather than silently emptying.
+    getCredentialEvents: async (studentId: number, kind?: CredentialEventKind) => {
+      const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+      return this.request<CredentialAuditResult>(`/students/${studentId}/credential-events${query}`);
+    },
+    // PA52 — how many logins are live on the learner's account right now. Counts
+    // only: the server never returns a token, uuid or hash, so a parent may see
+    // "2 thiết bị" without being handed anything replayable (§8).
+    getSessions: async (studentId: number) => {
+      return this.request<StudentSessions>(`/students/${studentId}/sessions`);
+    },
+    // PA52 — end every live login of the learner (both credential channels), for
+    // the "nghi lộ mật khẩu" case. Idempotent: an empty account returns
+    // revoked: 0 instead of an error, and only a real revocation is audited.
+    revokeSessions: async (studentId: number) => {
+      return this.request<StudentSessions>(`/students/${studentId}/sessions/revoke`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    },
+    // PA56 — which devices hold the learner's account, named for the adult
+    // responsible (same gate as the PA52 counts). The handle is the only id a
+    // client ever sees, so it can end one row without knowing the token (§8).
+    getDevices: async (studentId: number) => {
+      return this.request<StudentDeviceList>(`/students/${studentId}/devices`);
+    },
+    // PA56 — end ONE device, leaving the child's others signed in. A handle
+    // that already signed out answers 404 ABA_DEVICE_NOT_FOUND.
+    revokeDevice: async (studentId: number, handle: string) => {
+      return this.request<StudentDeviceRevokeResult>(
+        `/students/${studentId}/devices/${encodeURIComponent(handle)}`,
+        { method: 'DELETE' },
+      );
     },
   };
 

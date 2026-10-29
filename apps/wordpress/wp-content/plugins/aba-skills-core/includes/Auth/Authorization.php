@@ -84,6 +84,9 @@ function aba_user_dto(\WP_User $user): array {
         'studentId' => $student ? (int)$student['id'] : null,
         'schoolId' => $student ? (int)($student['school_id'] ?? 0) : null,
         'parentId' => in_array('aba_parent', $roles, true) || get_user_meta($user->ID, 'aba_parent', true) ? (int)$user->ID : null,
+        // PA48 — a staff-generated handout password must be replaced by the
+        // learner's own secret on first sign-in; the front end routes on this.
+        'mustChangePassword' => get_user_meta($user->ID, 'aba_must_change_password', true) === '1',
     ];
 }
 

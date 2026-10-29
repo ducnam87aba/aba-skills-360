@@ -10,6 +10,13 @@ import type { User } from '@aba/types';
 /** Routes reachable without a session. */
 const PUBLIC_PATHS = new Set(['/', '/login']);
 
+/** PA48 — the forced first-login password screen, reachable by any session. */
+export const CHANGE_PASSWORD_PATH = '/change-password';
+
+function isChangePassword(path: string): boolean {
+  return normalize(path) === CHANGE_PASSWORD_PATH;
+}
+
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.has(normalize(pathname));
 }
@@ -36,6 +43,13 @@ export function resolveAuthRedirect(pathname: string, user: User | null): string
   const path = normalize(pathname);
   if (isPublicPath(path)) return null;
   if (!user) return '/login';
+
+  // PA48 — a handout-credential session may only sit on the change-password
+  // screen until it owns a private secret. PA51 made this a real constraint
+  // rather than a courtesy: the server refuses every other aba/v1 route with
+  // 403 CREDENTIAL_CHANGE_REQUIRED while the flag is set, so this guard exists
+  // to route the user before they hit that wall, not to authorize them.
+  if (user.mustChangePassword && !isChangePassword(path)) return CHANGE_PASSWORD_PATH;
 
   const roles = user.roles ?? [];
   const canParent = roles.includes('parent');

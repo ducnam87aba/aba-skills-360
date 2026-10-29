@@ -45,6 +45,25 @@ spl_autoload_register(function ($class) {
 require_once ABA_SKILLS_CORE_PATH . 'includes/Auth/Authorization.php';
 
 /**
+ * PA53 — throttle password sign-ins at the `authenticate` filter, i.e. on EVERY
+ * door that accepts the account password (this plugin's /auth/login, wp-login.php,
+ * XML-RPC, wp_signon), with one shared counter. Registered at load — never on
+ * rest_api_init — because wp-login.php and XML-RPC never reach the REST
+ * bootstrap, which is exactly how PA19's REST-only counter was bypassed.
+ */
+\ABA\Core\Services\LoginThrottleService::register();
+
+/**
+ * PA59 — announce a COOKIE sign-in. PA57 announces a new app token, which is what
+ * the headless client mints; a browser sign-in (wp-login.php, or the cookie
+ * fallback when app passwords are unavailable) mints none and used to leave no
+ * trace a family could see — the one path a leaked handout password would be used
+ * on. Registered at load for the same reason as the throttle: wp-login.php never
+ * reaches the REST bootstrap.
+ */
+\ABA\Core\Services\CredentialSessionService::register();
+
+/**
  * PA37 — local headless auth over plain HTTP. WordPress core refuses
  * Application Passwords when !is_ssl() and the environment is not "local"
  * (wp_is_application_passwords_available). The docker stack serves HTTP on
@@ -158,6 +177,7 @@ register_deactivation_hook(__FILE__, function () {
  */
 add_action('init', function () {
     \ABA\Core\Admin\LinkRequestsAdminPage::init();
+    \ABA\Core\Admin\RosterAdminPage::init();
 });
 
 /**
@@ -222,6 +242,10 @@ add_action('rest_api_init', function () {
     // Standardize every aba/v1 error into the contract shape (api-contract §6).
     \ABA\Core\REST\ErrorNormalizer::register();
 
+    // PA51 — enforce the forced-change state server-side, not just in the client
+    // guard. Registered before the controllers so it applies to every route.
+    \ABA\Core\Auth\CredentialLock::register();
+
     $userToDto = function (\WP_User $user, ?array $student): array {
         $roles = $user->roles ?: [];
         return [
@@ -233,6 +257,9 @@ add_action('rest_api_init', function () {
             'studentId' => $student ? (int)$student['id'] : null,
             'schoolId' => $student ? (int)($student['school_id'] ?? 0) : null,
             'parentId' => in_array('aba_parent', $roles, true) || get_user_meta($user->ID, 'aba_parent', true) ? (int)$user->ID : null,
+            // PA48 — same forced-first-change flag as the login DTO, so a
+            // reload of /me keeps routing the learner to /change-password.
+            'mustChangePassword' => get_user_meta($user->ID, 'aba_must_change_password', true) === '1',
         ];
     };
 

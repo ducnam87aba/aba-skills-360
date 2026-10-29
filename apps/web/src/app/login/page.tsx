@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { useAuthStore, homeRouteFor } from '../../features/auth/store';
+import { CHANGE_PASSWORD_PATH } from '../../features/auth/guard';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -21,7 +22,10 @@ export default function LoginPage() {
     if (!username.trim() || !password) return;
     try {
       const user = await login(username.trim(), password);
-      router.push(homeRouteFor(user));
+      // PA48 — a handout credential goes straight to the change screen; routing
+      // through homeRouteFor first would flash /learn and fire authenticated
+      // calls the guard then has to bounce (guard.ts is only a backstop).
+      router.push(user.mustChangePassword ? CHANGE_PASSWORD_PATH : homeRouteFor(user));
     } catch {
       // The store already captured the normalized message in `error`.
     }

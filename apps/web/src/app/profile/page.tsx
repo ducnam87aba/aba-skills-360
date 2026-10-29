@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 import type { CompetencyCode, SkillLevel } from '@aba/types';
 import { Avatar } from '../../components/Avatar';
+import { DevicesPanel } from '../../features/auth/DevicesPanel';
 import { formatClassLabel } from '../../lib/classLabel';
 
 const COMP_COLORS: Record<CompetencyCode, string> = {
@@ -163,6 +164,9 @@ export default function ProfilePage() {
           </p>
         )}
       </Card>
+
+      {/* PA55 — which devices still hold a session on this account (§8). */}
+      <DevicesPanel />
 
       <Card className="p-5 flex items-center gap-3 text-sm text-slate-500">
         <BookOpen className="w-5 h-5 text-brand-500 shrink-0" />

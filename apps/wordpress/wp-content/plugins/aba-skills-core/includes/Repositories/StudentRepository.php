@@ -16,14 +16,21 @@ class StudentRepository {
      * LEFT JOINing them here populates school_name / class_name that toApiShape
      * already reads — in ONE query, so no caller pays an N+1 lookup. LEFT (not
      * INNER) keeps the student visible even if its school/class row is missing.
+     * PA46 adds the linked wp_users login (LEFT: cohort rows always have a user,
+     * but a broken link must never hide the learner) so staff and parents can
+     * see the account a learner signs in with. PA47 surfaces the one-time-issue
+     * marker (aba_credential_issued_at user meta) so the roster can label the
+     * action "Cấp tài khoản" vs "Đặt lại mật khẩu" without a probe request.
      */
     private function baseSelect(): string {
         global $wpdb;
         $p = $wpdb->prefix;
-        return "SELECT s.*, sch.name AS school_name, cls.name AS class_name
+        return "SELECT s.*, sch.name AS school_name, cls.name AS class_name, u.user_login AS user_login, cred.meta_value AS credential_issued_at
                 FROM {$p}aba_students s
                 LEFT JOIN {$p}aba_schools sch ON sch.id = s.school_id
-                LEFT JOIN {$p}aba_classes cls ON cls.id = s.class_id ";
+                LEFT JOIN {$p}aba_classes cls ON cls.id = s.class_id
+                LEFT JOIN {$p}users u ON u.ID = s.user_id
+                LEFT JOIN {$p}usermeta cred ON cred.user_id = s.user_id AND cred.meta_key = 'aba_credential_issued_at' ";
     }
 
     public function findById(int $id): ?array {
@@ -52,6 +59,65 @@ class StudentRepository {
         return $row ?: null;
     }
 
+    /**
+     * PA45 — persist edits to an existing learner. Persistence only (§4): the
+     * service has already gated WHO may be edited and validated WHAT values are
+     * legal; this method just writes the allowed subset. $data keys are column
+     * names; unknown keys are ignored so a stray field can never widen the write.
+     * Returns true on success.
+     */
+    public function update(int $id, array $data): bool {
+        global $wpdb;
+        $allowed = [
+            'first_name', 'last_name', 'grade_level', 'grade_group',
+            'school_id', 'class_id', 'status',
+        ];
+        $write = [];
+        $formats = [];
+        foreach ($allowed as $column) {
+            if (!array_key_exists($column, $data)) {
+                continue;
+            }
+            $write[$column] = $data[$column];
+            $formats[] = in_array($column, ['first_name', 'last_name', 'grade_group', 'status'], true) ? '%s' : '%d';
+        }
+        if (empty($write)) {
+            return false;
+        }
+        return $wpdb->update($this->table, $write, ['id' => $id], $formats, ['%d']) !== false;
+    }
+
+    /** True when a code is already taken (active OR archived) — codes are UNIQUE. */
+    public function codeExists(string $code): bool {
+        global $wpdb;
+        return $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$this->table} WHERE student_code = %s LIMIT 1",
+            $code
+        )) !== null;
+    }
+
+    /**
+     * PA44 — persist one learner row. Persistence only (§4): the caller (a
+     * service) has already resolved the scoped school_id/class_id and created the
+     * linked wp_user, so nothing here trusts a client value. Returns the new
+     * student id, or null on failure. created_at/updated_at use the table defaults.
+     */
+    public function insert(array $data): ?int {
+        global $wpdb;
+        $ok = $wpdb->insert($this->table, [
+            'user_id'      => (int) $data['user_id'],
+            'school_id'    => (int) $data['school_id'],
+            'class_id'     => isset($data['class_id']) ? (int) $data['class_id'] : null,
+            'student_code' => (string) $data['student_code'],
+            'first_name'   => (string) $data['first_name'],
+            'last_name'    => (string) $data['last_name'],
+            'grade_level'  => (int) $data['grade_level'],
+            'grade_group'  => (string) $data['grade_group'],
+            'status'       => 'active',
+        ], ['%d', '%d', '%d', '%s', '%s', '%s', '%d', '%s', '%s']);
+        return $ok === false ? null : (int) $wpdb->insert_id;
+    }
+
     public function getChildrenForParent(int $parentUserId): array {
         global $wpdb;
         $p = $wpdb->prefix;
@@ -66,34 +132,39 @@ class StudentRepository {
     }
 
     /**
-     * The active roster of one school (PA23). Scoped by school_id — the caller's
-     * own assignment — never an arbitrary id from the client (§8). Returns []
-     * for an unassigned caller (school_id 0), which is the safe default.
+     * The roster of one school (PA23). Scoped by school_id — the caller's own
+     * assignment — never an arbitrary id from the client (§8). Returns [] for an
+     * unassigned caller (school_id 0), which is the safe default. PA45: staff
+     * screens pass $includeInactive so archived learners stay visible for
+     * reactivation; every older caller keeps the active-only view.
      */
-    public function listBySchool(int $schoolId): array {
+    public function listBySchool(int $schoolId, bool $includeInactive = false): array {
         if ($schoolId <= 0) {
             return [];
         }
         global $wpdb;
+        $statusClause = $includeInactive ? '' : " AND s.status = 'active'";
         $rows = $wpdb->get_results($wpdb->prepare(
-            $this->baseSelect() . "WHERE s.school_id = %d AND s.status = 'active' ORDER BY s.id ASC",
+            $this->baseSelect() . "WHERE s.school_id = %d" . $statusClause . " ORDER BY s.id ASC",
             $schoolId
         ), ARRAY_A) ?: [];
         return array_map([$this, 'toApiShape'], $rows);
     }
 
     /**
-     * The active roster of one class (PA24). Scoped by class_id — the caller's own
+     * The roster of one class (PA24). Scoped by class_id — the caller's own
      * assignment — never an arbitrary id from the client (§8). Returns [] for an
-     * unassigned caller (class_id 0), which is the safe default.
+     * unassigned caller (class_id 0), which is the safe default. PA45 keeps the
+     * same $includeInactive flag as listBySchool.
      */
-    public function listByClass(int $classId): array {
+    public function listByClass(int $classId, bool $includeInactive = false): array {
         if ($classId <= 0) {
             return [];
         }
         global $wpdb;
+        $statusClause = $includeInactive ? '' : " AND s.status = 'active'";
         $rows = $wpdb->get_results($wpdb->prepare(
-            $this->baseSelect() . "WHERE s.class_id = %d AND s.status = 'active' ORDER BY s.id ASC",
+            $this->baseSelect() . "WHERE s.class_id = %d" . $statusClause . " ORDER BY s.id ASC",
             $classId
         ), ARRAY_A) ?: [];
         return array_map([$this, 'toApiShape'], $rows);
@@ -129,6 +200,13 @@ class StudentRepository {
             'longestStreak' => (int)($row['longest_streak'] ?? 0),
             'level' => (int)($row['level'] ?? max(1, intdiv($totalXp, 200) + 1)),
             'lastActiveAt' => $row['last_active_at'] ?? gmdate('Y-m-d\TH:i:s\Z'),
+            // PA45 — the roster screen shows archived learners for reactivation,
+            // so status is part of the staff-facing shape.
+            'status' => $row['status'] ?? 'active',
+            // PA46 — the login a learner signs in with once staff provision it.
+            'username' => $row['user_login'] ?? null,
+            // PA47 — set once a password has been issued; drives the reset UI.
+            'credentialIssuedAt' => !empty($row['credential_issued_at']) ? (string) $row['credential_issued_at'] : null,
         ];
     }
 }

@@ -21,6 +21,11 @@ export interface User {
   studentId?: number;
   parentId?: number;
   schoolId?: number;
+  /**
+   * PA48 — the account still signs with a staff-generated handout password and
+   * must set a private one before entering the app (forced first-login change).
+   */
+  mustChangePassword?: boolean;
 }
 
 export type GradeGroup = '1_3' | '4_6' | '7_9' | '10_12';
@@ -59,6 +64,139 @@ export interface StudentProfile {
   longestStreak: number;
   level: number;
   lastActiveAt: string;
+  // PA45: staff roster views carry the soft-archive state; absent on older
+  // endpoints so every existing consumer stays valid.
+  status?: 'active' | 'inactive';
+  // PA46: the WordPress login the learner signs the app in with. Present once
+  // staff provision the account (the password itself is never readable here —
+  // only issued once to staff); null when no login exists yet.
+  username?: string | null;
+  // PA47: set once a password has been issued to staff. Drives the roster's
+  // "Cấp tài khoản" vs "Đặt lại mật khẩu" label so a re-click never silently
+  // rotates a live credential. Optional so older endpoints stay valid.
+  credentialIssuedAt?: string | null;
+}
+
+/**
+ * PA61 — the four dimensions a credential row can belong to. The security
+ * history screen filters on these; the server groups, it never uses them to
+ * decide who may read (§8 still gates every row).
+ */
+export type CredentialEventKind = 'account' | 'device' | 'session' | 'lockout';
+
+/**
+ * PA49 — one append-only entry on a learner's credential audit trail: who
+ * issued / reset / changed their login, and when. Never carries a password,
+ * hash or app token — only non-secret context (§8).
+ *
+ * PA61 — the trail now covers all three doors (a new device, a password
+ * sign-in, a lockout after failed guesses), so each row says which KIND it is
+ * and carries the non-secret detail that was already in the ledger: the
+ * friendly device label, which door the password came through, and how much a
+ * lockout cost. Absent detail is `null`, never `''` or `0`, so the screen can
+ * tell "nothing was named" from "something named nothing".
+ */
+export interface CredentialAuditEvent {
+  id: number;
+  action:
+    | 'credential_issued'
+    | 'credential_reset'
+    | 'credential_changed'
+    | 'credential_expired'
+    | 'credential_sessions_revoked'
+    | 'credential_device_added'
+    | 'credential_device_revoked'
+    | 'credential_session_opened'
+    | 'login_throttled';
+  /** Which filter chip this row answers to. */
+  kind: CredentialEventKind;
+  /** Localized verb for `action`, e.g. "Cấp tài khoản đăng nhập". */
+  actionLabel: string;
+  /** Display name of the acting staff, or "Chính bạn" / "Nhân viên nhà trường". */
+  actorLabel: string;
+  /** 'generated' (forced change) | 'staff' (staff-typed) | '' for a self-change. */
+  method: string;
+  mustChange: boolean;
+  /** ISO-8601 (Z) instant the event was recorded. */
+  createdAt: string;
+  /** Device label the server derived from the user agent, e.g. "Máy tính". */
+  label: string | null;
+  /** Which door the account password came through: a page, or a script. */
+  door: 'cookie' | 'xmlrpc' | null;
+  /** Failed guesses a lockout cost, when the row is a lockout. */
+  failures: number | null;
+  /** Seconds of the lockout, when the row is a lockout. */
+  retryAfter: number | null;
+}
+
+export interface CredentialAuditResult {
+  studentId: number;
+  events: CredentialAuditEvent[];
+}
+
+/**
+ * PA52 — a learner's live logins, as counts only. The server never returns a
+ * token, uuid or hash, so this can be shown to a parent as-is (§8).
+ */
+export interface StudentSessions {
+  studentId: number;
+  /** sessions + appPasswords: every login still usable right now. */
+  total: number;
+  /** Cookie sessions (the browser-mode fallback). */
+  sessions: number;
+  /** Basic-auth tokens the headless app mints one of per sign-in. */
+  appPasswords: number;
+  /** How many logins the revoke call just ended (revoke response only). */
+  revoked?: number;
+}
+
+/**
+ * PA55 — one live device of the caller's OWN account. `handle` is a derived,
+ * one-way id: the token and its uuid never leave the server, so a row is safe
+ * to render as-is (§8).
+ */
+export interface DeviceSession {
+  handle: string;
+  /** Device label: 'Điện thoại' | 'Máy tính bảng' | 'Máy tính' | 'Thiết bị'. */
+  label: string;
+  /** When this device signed in (ISO 8601, UTC). */
+  createdAt: string;
+  /** Last authenticated request from it, or null while it has never been used. */
+  lastUsedAt: string | null;
+  /** True for the device making this request. */
+  current: boolean;
+}
+
+export interface DeviceSessionList {
+  devices: DeviceSession[];
+  count: number;
+  /** How many devices one account may keep signed in (server policy). */
+  maxDevices: number;
+}
+
+export interface DeviceRevokeResult {
+  revoked: number;
+}
+
+/**
+ * PA56 — a child's live devices, as the adult responsible for them sees it.
+ * Same non-secret projection as the self-service list, so every row is safe to
+ * render (§8). No row is `current`: none of these devices is the caller's.
+ */
+export interface StudentDeviceList {
+  studentId: number;
+  devices: DeviceSession[];
+  count: number;
+  maxDevices: number;
+}
+
+export interface StudentDeviceRevokeResult {
+  studentId: number;
+  revoked: number;
+  /** Which device was ended, so the panel can name it after the fact. */
+  label: string;
+  /** How many devices remain signed in after the call. */
+  count: number;
 }
 
 export interface ParentProfile {
@@ -499,7 +637,11 @@ export interface ParentOverview {
 // PA40 — the child's recent activity, as surfaced on the parent "Hoạt động"
 // screen. Every item is derived from the progress/XP ledgers and the achievement
 // timeline on the server (AGENTS.md §12); the client renders, it never fabricates.
-export type ParentActivityType = 'lesson' | 'mission' | 'badge';
+// PA57 adds `device`: the one item about the ACCOUNT rather than about learning —
+// a sign-in that minted a new device token (label only, never a token or uuid).
+// PA58 adds `security`: a lock engagement from repeated failed sign-ins, carried
+// as facts (how many tries, how long the wait) and never the address behind it.
+export type ParentActivityType = 'lesson' | 'mission' | 'badge' | 'device' | 'security';
 
 export interface ParentActivity {
   id: string;

@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 
 class MigrationRunner {
     private const OPTION_KEY = 'aba_schema_version';
-    private const LATEST = 7;
+    private const LATEST = 8;
 
     public static function run(): void {
         $current = (int)get_option(self::OPTION_KEY, 0);
@@ -54,6 +54,9 @@ class MigrationRunner {
                 break;
             case 7:
                 self::migration7ParentLinkRequests();
+                break;
+            case 8:
+                self::migration8CredentialIssuedBackfill();
                 break;
         }
     }
@@ -242,6 +245,40 @@ class MigrationRunner {
             KEY idx_plr_status (status)
         ) {$charset};";
         dbDelta($sql);
+    }
+
+    /**
+     * v8 — PA47 credential-issued backfill. The one-time-issue marker
+     * (aba_credential_issued_at user meta) only exists from PA47, but learners
+     * provisioned in PA46 — and the seeded demo learner — already hold a real,
+     * signable password. Without the marker a roster re-click on those accounts
+     * would silently rotate a live credential (the exact hazard PA47 removes).
+     * Stamp the marker for every user already carrying the 'student' role — the
+     * role the provisioning path grants — so both the guard and the UI label are
+     * correct for legacy accounts. Idempotent: only fills users still lacking it.
+     */
+    private static function migration8CredentialIssuedBackfill(): void {
+        global $wpdb;
+        $p = $wpdb->prefix;
+        $caps = $p . 'capabilities';
+        $now = current_time('mysql', 1);
+
+        // Role 'student' lives in the serialized capabilities blob as s:7:"student".
+        $userIds = $wpdb->get_col($wpdb->prepare(
+            "SELECT user_id FROM {$p}usermeta WHERE meta_key = %s AND meta_value LIKE %s",
+            $caps,
+            '%s:7:"student";b:1%'
+        )) ?: [];
+
+        foreach ($userIds as $uid) {
+            $uid = (int) $uid;
+            if ($uid <= 0) {
+                continue;
+            }
+            if (get_user_meta($uid, 'aba_credential_issued_at', true) === '') {
+                update_user_meta($uid, 'aba_credential_issued_at', $now);
+            }
+        }
     }
 
     /** Idempotent named index removal. */

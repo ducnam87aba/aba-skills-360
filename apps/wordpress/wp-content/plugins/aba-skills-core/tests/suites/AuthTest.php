@@ -39,6 +39,8 @@ return function (AbaTestKit $kit): void {
         $kit->checkSame('DTO exposes the linked studentId', $studentId, $data['user']['studentId'] ?? null);
         $kit->check('DTO has no password field', !isset($data['user']['user_pass']) && !isset($data['user']['password']));
         $kit->check('raw body does not leak the secret', strpos(wp_json_encode($data), $password) === false);
+        // PA54 — the sign-in's own device token, used by the lifecycle block below.
+        $sessionToken = is_string($data['token'] ?? null) ? $data['token'] : null;
 
         // ---- Wrong password => 401, uniform error shape -------------------
         $req  = $withJson(new WP_REST_Request('POST', '/aba/v1/auth/login'), [
@@ -80,29 +82,49 @@ return function (AbaTestKit $kit): void {
         $kit->checkSame('disabled account => 403', 403, $resp->get_status());
         delete_user_meta($userId, 'aba_account_status');
 
-        // ---- PA39: headless logout revokes the app password (§8 lifecycle) ----
-        // The line-35 sign-in issued the dedicated 'ABA headless session' app.
+        // ---- PA39/PA54: headless logout and its scope (§8 lifecycle) ----------
+        // The line-35 sign-in issued a dedicated device token. PA54 narrowed
+        // sign-out: a cookie session ends only itself, while a sign-out carrying
+        // the token ends exactly that token — never the account's other devices.
         // Assertable only where app passwords are issuable in this environment;
         // elsewhere sign-out must still succeed cleanly via the cookie fallback.
         if (class_exists('WP_Application_Passwords')
             && apply_filters('wp_is_application_passwords_available', true)
             && apply_filters('wp_is_application_passwords_available_for_user', true, $userId)) {
             require_once ABSPATH . WPINC . '/class-wp-application-passwords.php';
-            $appName = \ABA\Core\REST\AuthController::APP_NAME;
-            $sessionApps = static function () use ($userId, $appName): int {
+            // Core only attempts app-password auth on an API request (REST_REQUEST),
+            // which a CLI harness never defines.
+            add_filter('application_password_is_api_request', '__return_true');
+            $sessionApps = static function () use ($userId): int {
                 $n = 0;
                 foreach (\WP_Application_Passwords::get_user_application_passwords($userId) as $app) {
-                    if (($app['name'] ?? '') === $appName) {
+                    if (\ABA\Core\Services\CredentialSessionService::isOurApp((string) ($app['name'] ?? ''))) {
                         $n++;
                     }
                 }
                 return $n;
             };
             $kit->checkSame('login left exactly one dedicated app password', 1, $sessionApps());
+
+            // A cookie session must survive its own sign-out without collateral.
             wp_set_current_user($userId);
             $lout = rest_do_request(new WP_REST_Request('POST', '/aba/v1/auth/logout'));
-            $kit->checkSame('POST /auth/logout => 204', 204, $lout->get_status());
-            $kit->checkSame('logout revoked the dedicated app password', 0, $sessionApps());
+            $kit->checkSame('POST /auth/logout (cookie session) => 204', 204, $lout->get_status());
+            $kit->checkSame('cookie sign-out leaves the device token alone', 1, $sessionApps());
+            wp_set_current_user(0);
+
+            // Signing out over the token is what ends that device.
+            if (is_string($sessionToken) && $sessionToken !== '') {
+                global $current_user;
+                $current_user = null;
+                $_SERVER['PHP_AUTH_USER'] = $login;
+                $_SERVER['PHP_AUTH_PW']   = $sessionToken;
+                $byToken = rest_do_request(new WP_REST_Request('POST', '/aba/v1/auth/logout'));
+                unset($_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW']);
+                $kit->checkSame('POST /auth/logout (over the token) => 204', 204, $byToken->get_status());
+                $kit->checkSame('it revoked the device token it was given', 0, $sessionApps());
+            }
+            remove_filter('application_password_is_api_request', '__return_true');
             wp_set_current_user(0);
         } else {
             wp_set_current_user($userId);
@@ -111,20 +133,23 @@ return function (AbaTestKit $kit): void {
             wp_set_current_user(0);
         }
 
-        // ---- PA19: brute-force lockout (§8) -------------------------------
+        // ---- PA19/PA53: brute-force lockout (§8) ---------------------------
         // Isolated throwaway principal so the lock never touches the checks above.
         $lockStudent  = $kit->makeStudent('4_6');
         $lockPassword = 'Aba-L0ck!2026';
         $lockUser     = $kit->makeUser($lockStudent, $lockPassword);
         $lockLogin    = get_user_by('id', $lockUser)->user_login;
-        $lockKey      = \ABA\Core\REST\AuthController::failKey($lockLogin);
+        // PA53 — the counter moved out of the controller into LoginThrottleService
+        // (keyed by credential + address), so the key is asked for, not built.
+        $throttle     = new \ABA\Core\Services\LoginThrottleService();
+        $lockKey      = $throttle->accountKey($lockLogin, $throttle->clientAddress());
         delete_transient($lockKey);
 
         $lastStatus = 0;
-        for ($i = 1; $i <= \ABA\Core\REST\AuthController::MAX_ATTEMPTS; $i++) {
+        for ($i = 1; $i <= \ABA\Core\Services\LoginThrottleService::ACCOUNT_MAX_FAILURES; $i++) {
             $r = $withJson(new WP_REST_Request('POST', '/aba/v1/auth/login'), ['username' => $lockLogin, 'password' => 'nope' . $i]);
             $lastStatus = rest_do_request($r)->get_status();
-            if ($i < \ABA\Core\REST\AuthController::MAX_ATTEMPTS) {
+            if ($i < \ABA\Core\Services\LoginThrottleService::ACCOUNT_MAX_FAILURES) {
                 $kit->checkSame("failed attempt $i below the cap => 401", 401, $lastStatus);
             }
         }
@@ -143,7 +168,9 @@ return function (AbaTestKit $kit): void {
         $kit->checkSame('success leaves the failure counter cleared', 0, (int) get_transient($lockKey));
     } finally {
         wp_set_current_user(0);
-        delete_transient(\ABA\Core\REST\AuthController::failKey($login ?? ''));
+        if (!empty($login)) {
+            delete_transient((new \ABA\Core\Services\LoginThrottleService())->accountKey($login, (new \ABA\Core\Services\LoginThrottleService())->clientAddress()));
+        }
         if (!empty($lockKey)) {
             delete_transient($lockKey);
         }

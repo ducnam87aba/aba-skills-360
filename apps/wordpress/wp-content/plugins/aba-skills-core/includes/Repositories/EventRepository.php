@@ -21,6 +21,23 @@ class EventRepository {
     public const REPORT_GENERATED = 'report_generated';
     public const REPORT_READ = 'report_read';
 
+    /** PA49 — credential lifecycle audit (who issued/reset/changed a login). */
+    public const CREDENTIAL_ISSUED = 'credential_issued';
+    public const CREDENTIAL_RESET = 'credential_reset';
+    public const CREDENTIAL_CHANGED = 'credential_changed';
+    /** PA50 — a handout credential aged past the rotation window (forced change). */
+    public const CREDENTIAL_EXPIRED = 'credential_expired';
+    /** PA52 — a parent (or staff) ended every live login of an account. */
+    public const CREDENTIAL_SESSIONS_REVOKED = 'credential_sessions_revoked';
+    /** PA56 — one named device was signed out, the other devices left signed in. */
+    public const CREDENTIAL_DEVICE_REVOKED = 'credential_device_revoked';
+    /** PA57 — a device that was not signed in before now holds the account. */
+    public const CREDENTIAL_DEVICE_ADDED = 'credential_device_added';
+    /** PA59 — a browser session was opened with the account password. */
+    public const CREDENTIAL_SESSION_OPENED = 'credential_session_opened';
+    /** PA53 — a credential was locked out after repeated failed sign-ins. */
+    public const LOGIN_THROTTLED = 'login_throttled';
+
     private string $table;
 
     public function __construct() {
@@ -28,7 +45,9 @@ class EventRepository {
         $this->table = $wpdb->prefix . 'aba_events';
     }
 
-    /** Append one event. Returns the new row id, or 0 on failure. */
+    /**
+     * Append one event. Returns the new row id, or 0 on failure.
+     */
     public function record(?int $userId, ?int $studentId, string $eventName, array $payload): int {
         global $wpdb;
         $inserted = $wpdb->insert(
@@ -43,6 +62,30 @@ class EventRepository {
             ['%d', '%d', '%s', '%s', '%s']
         );
         return $inserted === false ? 0 : (int)$wpdb->insert_id;
+    }
+
+    /**
+     * PA49 — newest-first raw rows for one student restricted to a set of event
+     * names. The generic events table stays untouched (§6); the caller owns the
+     * permission gate, this is pure persistence. The acting user id is returned
+     * so the service can resolve *who* acted without joining here.
+     *
+     * @param list<string> $eventNames
+     * @return list<object>{id, user_id, student_id, event_name, payload_json, created_at}
+     */
+    public function listForStudent(int $studentId, array $eventNames, int $limit = 50): array {
+        global $wpdb;
+        if ($eventNames === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($eventNames), '%s'));
+        $sql = "SELECT id, user_id, student_id, event_name, payload_json, created_at
+                FROM {$this->table}
+                WHERE student_id = %d AND event_name IN ({$placeholders})
+                ORDER BY created_at DESC, id DESC
+                LIMIT %d";
+        $params = array_merge([$studentId], $eventNames, [$limit]);
+        return $wpdb->get_results($wpdb->prepare($sql, $params)) ?: [];
     }
 
     /**

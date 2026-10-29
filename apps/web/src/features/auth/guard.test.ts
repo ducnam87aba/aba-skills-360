@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { User } from '@aba/types';
-import { resolveAuthRedirect, isPublicPath } from './guard';
+import { resolveAuthRedirect, isPublicPath, CHANGE_PASSWORD_PATH } from './guard';
 
 const student: User = { id: 1, username: 's', email: '', displayName: 'S', roles: ['student'], studentId: 1 };
 const parent: User = { id: 2, username: 'p', email: '', displayName: 'P', roles: ['parent'], parentId: 2 };
 const dual: User = { id: 3, username: 'd', email: '', displayName: 'D', roles: ['parent', 'student'] };
 const admin: User = { id: 4, username: 'a', email: '', displayName: 'A', roles: ['super_admin'] };
+const handout: User = { ...student, mustChangePassword: true };
 
 describe('auth guard — public paths (PA13)', () => {
   it('treats the landing and login routes as public', () => {
@@ -62,5 +63,29 @@ describe('auth guard — path normalization', () => {
   it('ignores trailing slashes', () => {
     expect(resolveAuthRedirect('/learn/', student)).toBeNull();
     expect(resolveAuthRedirect('/parent/', student)).toBe('/learn');
+  });
+});
+
+describe('auth guard — forced first-login password change (PA48)', () => {
+  it('pins a handout-credential session to the change screen', () => {
+    expect(resolveAuthRedirect('/learn', handout)).toBe(CHANGE_PASSWORD_PATH);
+    expect(resolveAuthRedirect('/parent', handout)).toBe(CHANGE_PASSWORD_PATH);
+    expect(resolveAuthRedirect('/assessment/9', handout)).toBe(CHANGE_PASSWORD_PATH);
+  });
+
+  it('lets the session sit on the change screen itself', () => {
+    expect(resolveAuthRedirect('/change-password', handout)).toBeNull();
+    expect(resolveAuthRedirect('/change-password/', handout)).toBeNull();
+  });
+
+  it('preempts role routing — the flag is checked first', () => {
+    // A parent with an unset handout password still sees the change screen,
+    // not the /learn bounce they would otherwise get.
+    expect(resolveAuthRedirect('/learn', { ...parent, mustChangePassword: true })).toBe(CHANGE_PASSWORD_PATH);
+  });
+
+  it('leaves cleared sessions untouched', () => {
+    expect(resolveAuthRedirect('/learn', student)).toBeNull();
+    expect(resolveAuthRedirect('/learn', { ...student, mustChangePassword: false })).toBeNull();
   });
 });

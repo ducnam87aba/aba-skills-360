@@ -54,6 +54,13 @@ class ErrorNormalizer {
             ? $inner['details']
             : new \stdClass();
 
+        // PA53 — a throttle refusal states its wait in the body (retryAfter) and
+        // also in the standard header, so a proxy or a client that only reads
+        // headers still backs off instead of hammering the door.
+        if ((string) $data['code'] === 'ACCOUNT_LOCKED' && is_array($details) && !empty($details['retryAfter'])) {
+            $result->header('Retry-After', (string) max(1, (int) $details['retryAfter']));
+        }
+
         $result->set_data([
             'error' => [
                 'code' => (string)$data['code'],
